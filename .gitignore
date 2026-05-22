@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+.env*
+!.env.example
+*.log
+.DS_Store
+.vercel
+*.tsbuildinfo
+__pycache__
+*.pyc
+pipeline/schema_map.json

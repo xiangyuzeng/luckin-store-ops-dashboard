@@ -1,0 +1,114 @@
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 320px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.tableScroll {
+  overflow-y: auto;
+  max-height: 320px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.th {
+  position: sticky;
+  top: 0;
+  background: var(--color-gray-50);
+  padding: 0;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  z-index: 1;
+  white-space: nowrap;
+}
+
+.thBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 10px 12px;
+  width: 100%;
+  text-align: inherit;
+}
+
+.thBtn:hover {
+  color: var(--color-primary);
+}
+
+.sortIcon {
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+.cell {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.numeric {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.rank {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--color-accent-light);
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: 10px;
+}
+
+.name {
+  font-weight: 500;
+}
+
+.empty {
+  text-align: center;
+  padding: 32px;
+  color: var(--color-text-muted);
+}

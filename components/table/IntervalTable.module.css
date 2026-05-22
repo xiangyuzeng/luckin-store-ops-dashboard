@@ -1,0 +1,107 @@
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.tableScroll {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.th {
+  position: sticky;
+  top: 0;
+  background: var(--color-primary);
+  color: var(--color-text-inverted);
+  padding: 0;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  z-index: 2;
+  white-space: nowrap;
+}
+
+.thBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 10px 14px;
+  width: 100%;
+  text-align: inherit;
+}
+
+.thBtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sortIcon {
+  font-size: 10px;
+  opacity: 0.75;
+  margin-left: auto;
+}
+
+.cell {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.numeric {
+  text-align: right;
+  white-space: nowrap;
+}
+
+tbody tr:nth-child(even) .cell {
+  background: var(--color-surface-alt);
+}
+
+tbody tr:hover .cell {
+  background: rgba(74, 144, 217, 0.06);
+}
+
+.footerCell {
+  padding: 11px 14px;
+  background: var(--color-gray-50);
+  color: var(--color-text);
+  font-weight: 700;
+  border-top: 2px solid var(--color-border-strong);
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+}

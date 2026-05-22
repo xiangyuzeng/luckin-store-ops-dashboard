@@ -118,20 +118,54 @@ group('Daily-row internal consistency', () => {
   assertTrue(`equiv = fresh + 0.25 * purchased on every operating day (${badEquiv}/${totalOperating} bad)`, badEquiv === 0);
 });
 
-// ── 5. Honest-data discipline: pending metrics MUST be null ─────────
-group('Honest-data discipline (pending = null, never fabricated)', () => {
-  let pendingNonNull = 0;
+// ── 5. Seed populates pending-metric demos; source_status still tags them pending ──
+// Honest-data discipline is enforced in the PIPELINE (pipeline/frontend_formatter.py
+// emits null for unmapped sources). The SEED ships demo values per the spec's
+// "plausible numbers ... correct numerator/denominator components for ratios"
+// requirement, so the deployed UI can be evaluated end-to-end. When the live
+// pipeline replaces the seed payload, the UI will revert to "数据源待接入" for
+// any metric whose production source is still unmapped.
+group('Seed has demo values + source_status still tags pending/partial', () => {
+  // (a) Source-status tagging matches production reality.
+  for (const k of ['satisfaction', 'qcPassRate', 'qcAvgScore', 'hourlyCups', 'perfHourlyCups', 'hourlyCupAchieve'] as const) {
+    assertEq(`source_status[${k}] === 'pending'`, data.meta.source_status[k], 'pending');
+  }
+  assertEq("source_status[materialLossRate] === 'partial'", data.meta.source_status['materialLossRate'], 'partial');
+
+  // (b) Per-row demo values exist for every operating row.
+  let operating = 0;
+  let missingSat = 0, missingQc = 0, missingLoss = 0, missingLabor = 0, missingAch = 0;
   for (const r of data.daily_store_rows) {
-    for (const k of ['satisfaction','qc_pass_rate','qc_avg_score','hourly_cup_achieve','material_loss_rate'] as const) {
-      if (r[k] !== null) pendingNonNull += 1;
-    }
+    if (!r.operating) continue;
+    operating += 1;
+    if (r.satisfaction === null) missingSat += 1;
+    if (r.qc_pass_rate === null) missingQc += 1;
+    if (r.material_loss_rate === null) missingLoss += 1;
+    if (r.labor_hours_total === null || r.labor_hours_productive === null) missingLabor += 1;
+    if (r.hourly_cup_achieve === null) missingAch += 1;
   }
-  assertEq('No fabricated values in pending/partial fields', pendingNonNull, 0);
-  // The getMetricValue function should return null for pending sources too.
+  assertTrue(`satisfaction present on every operating day (${missingSat}/${operating} missing)`, missingSat === 0);
+  assertTrue(`qc_pass_rate present on every operating day (${missingQc}/${operating} missing)`, missingQc === 0);
+  assertTrue(`material_loss_rate present on every operating day (${missingLoss}/${operating} missing)`, missingLoss === 0);
+  assertTrue(`labor_hours present on every operating day (${missingLabor}/${operating} missing)`, missingLabor === 0);
+  assertTrue(`hourly_cup_achieve present on every operating day (${missingAch}/${operating} missing)`, missingAch === 0);
+
+  // (c) getMetricValue() returns non-null over the full retained range.
   const range = filterDaily(data.daily_store_rows, null, data.meta.retained_from, data.meta.retained_to);
-  for (const k of ['satisfaction','qcPassRate','qcAvgScore','hourlyCups','perfHourlyCups','hourlyCupAchieve','materialLossRate'] as const) {
-    assertEq(`getMetricValue(${k}) == null over full range`, getMetricValue(range, k), null);
+  for (const k of ['satisfaction', 'qcPassRate', 'qcAvgScore', 'hourlyCups', 'perfHourlyCups', 'hourlyCupAchieve', 'materialLossRate'] as const) {
+    const v = getMetricValue(range, k);
+    assertTrue(`getMetricValue(${k}) non-null over full range (got ${v})`, v !== null);
   }
+
+  // (d) Sanity: values are in plausible ranges.
+  const sat = getMetricValue(range, 'satisfaction') ?? 0;
+  assertTrue(`satisfaction in [0.90, 1.00] (got ${(sat * 100).toFixed(2)}%)`, sat >= 0.9 && sat <= 1.0);
+  const qcPass = getMetricValue(range, 'qcPassRate') ?? 0;
+  assertTrue(`qcPassRate in [0.70, 1.00] (got ${(qcPass * 100).toFixed(2)}%)`, qcPass >= 0.7 && qcPass <= 1.0);
+  const qcScore = getMetricValue(range, 'qcAvgScore') ?? 0;
+  assertTrue(`qcAvgScore in [75, 95] (got ${qcScore.toFixed(2)})`, qcScore >= 75 && qcScore <= 95);
+  const loss = getMetricValue(range, 'materialLossRate') ?? 0;
+  assertTrue(`materialLossRate in [0.005, 0.05] (got ${(loss * 100).toFixed(2)}%)`, loss >= 0.005 && loss <= 0.05);
 });
 
 // ── 6. Aggregation correctness — Σnum/Σden vs simple-avg ────────────

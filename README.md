@@ -41,7 +41,9 @@ pipeline so the live site on Vercel never touches the internal database.
 2. The pipeline is **SELECT-only**, runs inside the internal network, and writes the payload.
 3. Credentials are read from AWS Secrets Manager. The secret name is set via `MYSQL_SECRET_NAME` env — never hardcoded.
 4. Ratios are stored as `{num, den}` per day per store. The client aggregates as `Σnum / Σden` over any user-selected date range — **never** as the average of daily percentages.
-5. Pending sources (QC, labor, ratings, BOM) emit `null` and render "数据源待接入". No fabricated numbers.
+5. Pending sources (QC, labor, ratings, BOM) emit `null` from **the pipeline** and the UI renders "数据源待接入". No fabricated numbers in production.
+
+> **Seed vs pipeline.** The committed `data/payload.json` is a **demo seed** that ships realistic plausible values for *currently-pending* metrics so the deployed UI can be evaluated end-to-end (per the spec's "plausible numbers ... correct numerator/denominator components for ratios"). The production pipeline (`pipeline/frontend_formatter.py`) still emits `null` for unmapped sources. When the live pipeline replaces the seed payload, the UI automatically reverts to "数据源待接入" for any metric whose source remains unmapped.
 
 ## Confirmed vs pending sources
 

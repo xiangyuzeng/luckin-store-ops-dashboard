@@ -96,6 +96,24 @@ def daily_orders_for_store(shop_no: str, day_ix: int) -> int:
     return max(50, int(base * dow_mult * drift * noise))
 
 
+# Per-store quality multiplier — higher = better satisfaction / QC / lower loss.
+# Gives the table a natural spread so the conditional data bars are meaningful.
+STORE_QUALITY = {
+    "US00001": 1.10,  # star
+    "US00002": 1.05,
+    "US00003": 1.00,
+    "US00004": 1.00,
+    "US00005": 1.02,
+    "US00006": 0.95,
+    "US00008": 1.00,
+    "US00012": 0.92,
+    "US00020": 1.03,
+    "US00024": 0.88,  # underperformer
+    "US00025": 0.97,
+    "US00027": 1.00,
+}
+
+
 def split_pickup_delivery(total: int):
     pickup_share = random.uniform(0.62, 0.72)
     pickup = int(round(total * pickup_share))
@@ -134,10 +152,53 @@ def build_daily_store_rows(stores, days):
             purchased = int(round(order_count * random.uniform(0.25, 0.40)))
             products = fresh + purchased
             equiv_products = equiv(fresh, purchased)
+            quality = STORE_QUALITY.get(s["shop_no"], 1.0)
 
-            # Confirmed efficiency durations:
+            # Confirmed efficiency durations.
             accept_secs_per_order = random.uniform(35, 75)
             make_secs_per_equiv = random.uniform(95, 180)
+
+            # --- Currently-pending metrics: realistic demo values for the seed ---
+            # The production pipeline (frontend_formatter.py) still emits null for these
+            # until the data sources are mapped via schema_probe.py. The seed populates
+            # them so the deployed UI can be demoed end-to-end (per the spec's "plausible
+            # numbers ... correct numerator/denominator components for ratios").
+
+            # 满意度 — % of orders without a complaint. Higher quality store -> fewer unsat.
+            unsat_rate = max(0.005, random.uniform(0.010, 0.035) / quality)
+            unsatisfied = int(round(order_count * unsat_rate))
+            satisfaction = {"num": order_count - unsatisfied, "den": order_count}
+
+            # 劳动工时 — total + productive (productive ≈ 80–88% of total).
+            labor_hours_total = round(random.uniform(45.0, 65.0), 1)
+            labor_hours_productive = round(labor_hours_total * random.uniform(0.78, 0.88), 1)
+
+            # 小时杯量达成比 — actual equiv cups / theoretical target cups.
+            #   num = actual cups produced today (= equiv_product_count)
+            #   den = labor_hours_productive × target_rate_cups_per_hour
+            # Scaling by quality lets star stores beat target.
+            target_rate = random.uniform(18.0, 24.0)
+            target_cups = max(1.0, round(labor_hours_productive * target_rate, 1))
+            # Inflate/deflate actual a bit by quality so the achieve ratio spreads.
+            adj_equiv = max(1, int(round(equiv_products * random.uniform(0.92, 1.04) * (0.95 + 0.10 * (quality - 1.0)))))
+            hourly_cup_achieve = {"num": adj_equiv, "den": target_cups}
+
+            # 品控稽核 — 1–3 audits per store per day; pass = score ≥ 80.
+            n_tasks = random.choices([1, 2, 3], weights=[0.55, 0.35, 0.10])[0]
+            # Score base scales with quality so the table has signal.
+            score_mu = 87 + 7.0 * (quality - 1.0)   # ~94 for stars (q=1.10), ~78 for laggards (q=0.88)
+            scores = [round(min(99.5, max(65.0, random.gauss(score_mu, 3.5))), 1) for _ in range(n_tasks)]
+            passed = sum(1 for sc in scores if sc >= 80)
+            qc_pass_rate = {"num": passed, "den": n_tasks}
+            qc_avg_score = {"num": round(sum(scores), 2), "den": n_tasks}
+
+            # 原料损耗率 — (actual − theoretical) / theoretical, in USD.
+            #   theoretical cost per equiv ≈ $1.5; actual loss = 0.5–4% of that.
+            cost_per_equiv = random.uniform(1.4, 1.9)
+            theory_cost = round(equiv_products * cost_per_equiv, 2)
+            loss_rate = max(0.002, random.uniform(0.010, 0.038) / quality)
+            actual_minus_theory = round(theory_cost * loss_rate, 2)
+            material_loss_rate = {"num": actual_minus_theory, "den": theory_cost}
 
             rows.append({
                 "shop_no": s["shop_no"], "date": d.isoformat(), "operating": True,
@@ -151,14 +212,14 @@ def build_daily_store_rows(stores, days):
                 "avg_daily_products": products,         # this row already represents a single store-day
                 "avg_daily_fresh_made": fresh,
                 "avg_daily_equiv": equiv_products,
-                # Pending — emit null
-                "satisfaction": None,
-                "qc_pass_rate": None,
-                "qc_avg_score": None,
-                "hourly_cup_achieve": None,
-                "material_loss_rate": None,
-                "labor_hours_total": None,
-                "labor_hours_productive": None,
+                # Demo seed values for currently-pending metrics — see comment block above.
+                "satisfaction": satisfaction,
+                "qc_pass_rate": qc_pass_rate,
+                "qc_avg_score": qc_avg_score,
+                "hourly_cup_achieve": hourly_cup_achieve,
+                "material_loss_rate": material_loss_rate,
+                "labor_hours_total": labor_hours_total,
+                "labor_hours_productive": labor_hours_productive,
                 # Confirmed durations as { total_seconds, weight }
                 "accept_response_duration": {
                     "total_seconds": round(accept_secs_per_order * order_count, 2),

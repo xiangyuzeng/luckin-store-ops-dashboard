@@ -1,12 +1,12 @@
 'use client';
 
-import { useMemo, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useMemo } from 'react';
 import { FilterBar } from '@/components/layout/FilterBar';
 import { EfficiencyChart } from '@/components/chart/EfficiencyChart';
 import { IntervalEfficiencyTable } from '@/components/table/IntervalEfficiencyTable';
 import { aggregateIntervalEfficiency, filterHalfHourEff } from '@/lib/aggregate';
-import { normalize, parseFiltersFromSearch } from '@/lib/filters';
+import { normalize } from '@/lib/filters';
+import { useUrlFilters } from '@/lib/use-url-filters';
 import type { Payload } from '@/lib/types';
 import styles from './efficiency.module.css';
 
@@ -14,13 +14,9 @@ interface Props {
   payload: Payload;
 }
 
-function EfficiencyBoardInner({ payload }: Props) {
-  const search = useSearchParams();
-  const state = useMemo(
-    () => parseFiltersFromSearch(new URLSearchParams(search.toString()), payload),
-    [search, payload],
-  );
-  const normalized = useMemo(() => normalize(state, payload), [state, payload]);
+export function EfficiencyBoard({ payload }: Props) {
+  const [filters, setFilters] = useUrlFilters(payload);
+  const normalized = useMemo(() => normalize(filters, payload), [filters, payload]);
 
   const halfHourRows = useMemo(
     () => filterHalfHourEff(payload.half_hour_rows, normalized.shopNos, normalized.from, normalized.to),
@@ -30,19 +26,9 @@ function EfficiencyBoardInner({ payload }: Props) {
 
   return (
     <main className={styles.main}>
-      <Suspense fallback={null}>
-        <FilterBar payload={payload} />
-      </Suspense>
+      <FilterBar payload={payload} filters={filters} onChange={setFilters} />
       <EfficiencyChart data={interval} />
       <IntervalEfficiencyTable rows={interval} from={normalized.from} to={normalized.to} />
     </main>
-  );
-}
-
-export function EfficiencyBoard({ payload }: Props) {
-  return (
-    <Suspense fallback={null}>
-      <EfficiencyBoardInner payload={payload} />
-    </Suspense>
   );
 }

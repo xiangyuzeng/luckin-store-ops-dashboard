@@ -1,16 +1,18 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
-import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+// FilterBar is a CONTROLLED component. The parent board owns filter state and
+// passes it down with an onChange callback. This keeps the bar SSR-friendly:
+// the static prerender shows the bar with default filters; the client hydrates
+// and syncs from URL via the parent's mount effect.
+
+import { useMemo } from 'react';
 import type { Payload } from '@/lib/types';
 import {
   ALL,
   defaultFilters,
-  filtersToSearch,
   listCities,
   listRegions,
   listStoresMatching,
-  parseFiltersFromSearch,
   type FilterState,
 } from '@/lib/filters';
 import { labels } from '@/lib/labels';
@@ -18,23 +20,11 @@ import styles from './FilterBar.module.css';
 
 interface Props {
   payload: Payload;
+  filters: FilterState;
+  onChange: (next: FilterState) => void;
 }
 
-export function FilterBar({ payload }: Props) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const search = useSearchParams();
-  const filters = useMemo(() => parseFiltersFromSearch(new URLSearchParams(search.toString()), payload), [search, payload]);
-
-  const apply = useCallback(
-    (next: FilterState) => {
-      const params = filtersToSearch(next);
-      const qs = params.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-    },
-    [pathname, router],
-  );
-
+export function FilterBar({ payload, filters, onChange }: Props) {
   const cities = useMemo(() => listCities(payload.stores), [payload.stores]);
   const regions = useMemo(() => listRegions(payload.stores, filters.city), [payload.stores, filters.city]);
   const stores = useMemo(
@@ -43,22 +33,22 @@ export function FilterBar({ payload }: Props) {
   );
 
   const onCityChange = (city: string) => {
-    apply({ ...filters, city: city === ALL ? ALL : city, region: ALL, shop: ALL });
+    onChange({ ...filters, city: city === ALL ? ALL : city, region: ALL, shop: ALL });
   };
   const onRegionChange = (region: string) => {
-    apply({ ...filters, region: region === ALL ? ALL : region, shop: ALL });
+    onChange({ ...filters, region: region === ALL ? ALL : region, shop: ALL });
   };
   const onShopChange = (shop: string) => {
-    apply({ ...filters, shop: shop === ALL ? ALL : shop });
+    onChange({ ...filters, shop: shop === ALL ? ALL : shop });
   };
   const onFromChange = (from: string) => {
-    apply({ ...filters, from });
+    onChange({ ...filters, from });
   };
   const onToChange = (to: string) => {
-    apply({ ...filters, to });
+    onChange({ ...filters, to });
   };
   const onReset = () => {
-    apply(defaultFilters(payload));
+    onChange(defaultFilters(payload));
   };
 
   const { retained_from, retained_to } = payload.meta;

@@ -1,10 +1,10 @@
 'use client';
 
-// HomeBoard — client-side composition of the 门店看板 page. The page server file
-// just passes the payload through; all filtering/aggregation/UI state lives here.
+// HomeBoard renders the 门店看板 layout. Filter state lives here (initialized
+// to defaults so SSR has real data) and is synced to/from the URL by
+// useUrlFilters — no useSearchParams, no Suspense fallback needed.
 
-import { useMemo, useState, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
 import { FilterBar } from '@/components/layout/FilterBar';
 import { KpiCard } from '@/components/kpi/KpiCard';
 import { KpiGroup } from '@/components/kpi/KpiGroup';
@@ -24,7 +24,8 @@ import {
   getMetricValue,
 } from '@/lib/aggregate';
 import { computeComparison } from '@/lib/compare';
-import { normalize, parseFiltersFromSearch } from '@/lib/filters';
+import { normalize } from '@/lib/filters';
+import { useUrlFilters } from '@/lib/use-url-filters';
 import { labels } from '@/lib/labels';
 import type { Payload } from '@/lib/types';
 import styles from './home.module.css';
@@ -33,16 +34,12 @@ interface Props {
   payload: Payload;
 }
 
-function HomeBoardInner({ payload }: Props) {
-  const search = useSearchParams();
-  const state = useMemo(
-    () => parseFiltersFromSearch(new URLSearchParams(search.toString()), payload),
-    [search, payload],
-  );
-  const normalized = useMemo(() => normalize(state, payload), [state, payload]);
+export function HomeBoard({ payload }: Props) {
+  const [filters, setFilters] = useUrlFilters(payload);
+  const normalized = useMemo(() => normalize(filters, payload), [filters, payload]);
   const [selectedShop, setSelectedShop] = useState<string | null>(null);
 
-  // shopNos for aggregation: when a row is drilled-down, override the filter; otherwise honor the filter.
+  // shopNos for aggregation: drill-down (row click) overrides the filter dropdown.
   const aggShopNos = useMemo(
     () => (selectedShop ? [selectedShop] : normalized.shopNos),
     [selectedShop, normalized.shopNos],
@@ -77,8 +74,7 @@ function HomeBoardInner({ payload }: Props) {
     { name: labels.charts.purchased, value: categoryShare.purchased, share: categoryShare.purchasedShare, color: '#4A90D9' },
   ];
 
-  // Visible stores in the table: scoped by city/region; ignore selectedShop so the drill-down state
-  // remains visible as a highlighted row, not a single-row table.
+  // Visible stores in the table: scoped by city/region; ignore drill-down so the highlighted row stays in context.
   const visibleStores = useMemo(() => {
     const set = new Set(normalized.shopNos ?? []);
     return payload.stores.filter((s) => s.operating_today && set.has(s.shop_no));
@@ -86,9 +82,7 @@ function HomeBoardInner({ payload }: Props) {
 
   return (
     <main className={styles.main}>
-      <Suspense fallback={null}>
-        <FilterBar payload={payload} />
-      </Suspense>
+      <FilterBar payload={payload} filters={filters} onChange={setFilters} />
 
       {selectedShop && (
         <div className={styles.drillBanner}>
@@ -159,13 +153,5 @@ function HomeBoardInner({ payload }: Props) {
 
       <IntervalSalesTable rows={intervalSales} from={normalized.from} to={normalized.to} />
     </main>
-  );
-}
-
-export function HomeBoard({ payload }: Props) {
-  return (
-    <Suspense fallback={null}>
-      <HomeBoardInner payload={payload} />
-    </Suspense>
   );
 }

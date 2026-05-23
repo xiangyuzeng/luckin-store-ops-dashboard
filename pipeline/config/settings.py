@@ -54,6 +54,18 @@ def _read_secret() -> dict[str, Any]:
 
 
 def load_credentials() -> DbCredentials:
+    # Path B (simpler): direct env vars. Set MYSQL_HOST to enable this branch.
+    # Useful when the runtime host can't reach AWS Secrets Manager (or when
+    # operators prefer not to grant IAM permissions to the pipeline).
+    if os.environ.get("MYSQL_HOST"):
+        return DbCredentials(
+            host=os.environ["MYSQL_HOST"],
+            port=int(os.environ.get("MYSQL_PORT", "3306")),
+            user=os.environ["MYSQL_USER"],
+            password=os.environ["MYSQL_PASSWORD"],
+            database=os.environ.get("MYSQL_DATABASE", "luckyus_iluckyhealth"),
+        )
+    # Path A (default): AWS Secrets Manager via MYSQL_SECRET_NAME.
     raw = _read_secret()
     return DbCredentials(
         host=raw["host"],

@@ -42,6 +42,23 @@ export const labels = {
     updatedJustNow: '数据刚刚更新',
     updatedAgo: (mins: number) => `数据更新于 ${mins} 分钟前`,
     stale: '· 显示历史数据',
+    autoLabel: '每日自动刷新',
+    tooltipTitle: '数据刷新说明',
+    tooltipBody:
+      '数据由后台管道每日自动刷新（北美东部时间约 04:00–05:00 / UTC 09:00）。' +
+      '管道在内部网络中执行只读 SQL，写入静态 JSON 并推送至 Git，Vercel 在收到推送后自动重新部署。',
+  },
+
+  dataInfo: {
+    titleRange: '数据范围',
+    titleSchedule: '刷新频率',
+    scheduleValue: '每日 09:00 UTC（北美东部约 04:00）',
+    titleSource: '数据源',
+    sourceValue: '内部 MySQL（只读）→ 自动管道 → 静态 JSON',
+    rangeValue: (from: string, to: string, totalDays: number) =>
+      `${from} 至 ${to}（共 ${totalDays} 天可选）`,
+    nextRefreshIn: (hours: number) =>
+      hours <= 0 ? '即将刷新' : `约 ${hours} 小时后再次刷新`,
   },
 
   pending: '数据源待接入',

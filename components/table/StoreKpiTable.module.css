@@ -45,15 +45,15 @@
 .th {
   position: sticky;
   top: 0;
-  background: var(--color-primary);
+  background: linear-gradient(180deg, #0c3679 0%, var(--color-primary) 100%);
   color: var(--color-text-inverted);
   padding: 0;
   text-align: left;
   font-weight: 600;
   font-size: 12px;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
   z-index: 2;
-  border-bottom: 1px solid var(--color-primary-light);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
   white-space: nowrap;
 }
 
@@ -97,7 +97,7 @@
 
 /* Sticky header cells for the frozen columns need a higher z-index than body cells in same columns. */
 .th.col1, .th.col2, .th.col3 {
-  background: var(--color-primary);
+  background: linear-gradient(180deg, #0c3679 0%, var(--color-primary) 100%);
   color: var(--color-text-inverted);
   z-index: 3;
 }

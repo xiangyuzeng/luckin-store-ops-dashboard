@@ -54,7 +54,7 @@ group('Payload meta', () => {
   const fromMs = new Date(data.meta.retained_from + 'T00:00:00Z').getTime();
   const toMs = new Date(data.meta.retained_to + 'T00:00:00Z').getTime();
   const days = Math.round((toMs - fromMs) / 86400000) + 1;
-  assertEq('retention window = 40 days', days, 40);
+  assertEq('retention window = 90 days', days, 90);
 });
 
 // ── 2. Store roster ─────────────────────────────────────────────────

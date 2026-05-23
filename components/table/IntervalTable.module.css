@@ -44,12 +44,13 @@
 .th {
   position: sticky;
   top: 0;
-  background: var(--color-primary);
+  background: linear-gradient(180deg, #0c3679 0%, var(--color-primary) 100%);
   color: var(--color-text-inverted);
   padding: 0;
   text-align: left;
   font-weight: 600;
   font-size: 12px;
+  letter-spacing: 0.02em;
   z-index: 2;
   white-space: nowrap;
 }

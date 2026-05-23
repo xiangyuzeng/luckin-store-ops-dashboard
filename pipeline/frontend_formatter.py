@@ -31,7 +31,7 @@ from .collectors.orders import (
 from .collectors.spoilage import fetch_daily_spoilage
 from .collectors.stores import fetch_store_directory
 
-RETAIN_DAYS = int(os.environ.get("RETAIN_DAYS", "40"))
+RETAIN_DAYS = int(os.environ.get("RETAIN_DAYS", "90"))
 HALF_HOUR_RETAIN_DAYS = int(os.environ.get("HALF_HOUR_RETAIN_DAYS", "3"))
 OUTPUT = Path(__file__).resolve().parent.parent / "data" / "payload.json"
 TENANT = os.environ.get("LUCKIN_TENANT", "LKUS")

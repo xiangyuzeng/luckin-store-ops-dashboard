@@ -81,7 +81,7 @@ confirmed:
 |-----------------------------------|--------------|----------|-------|
 | `MYSQL_SECRET_NAME`               | pipeline     | ✓        | AWS Secrets Manager secret with `{host,port,user,password,database}`. **No default.** |
 | `AWS_REGION`                      | pipeline     | default `us-east-1` | |
-| `RETAIN_DAYS`                     | pipeline     | default `40` | per-day rows retained for date range + WoW/MoM |
+| `RETAIN_DAYS`                     | pipeline     | default `90` | per-day rows retained for date range + WoW/MoM (≈1 quarter) |
 | `HALF_HOUR_RETAIN_DAYS`           | pipeline     | default `3`  | per-half-hour rows retained for interval tables |
 | `LUCKIN_TENANT`                   | pipeline     | default `LKUS` | tenant filter applied to every query |
 | `SKIP_GIT_COMMIT` / `SKIP_GIT_PUSH`| pipeline    | optional | for dry runs |

@@ -13,17 +13,11 @@ export function Header({ generatedAt, active }: Props) {
     <header className={styles.header}>
       <div className={styles.inner}>
         <div className={styles.brandBlock}>
-          <span className={styles.brandMark} aria-hidden>
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
-              <path d="M8 12.5l2.5 2.5L16 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-          <div>
-            <div className={styles.brand}>{labels.brand}</div>
-            <div className={styles.title}>{labels.appTitle}</div>
-          </div>
+          <span className={styles.brand}>{labels.brand}</span>
+          <span className={styles.divider} aria-hidden>·</span>
+          <span className={styles.title}>{labels.appTitle}</span>
         </div>
+
         <nav className={styles.nav} aria-label="主导航">
           <Link href="/" className={`${styles.tab} ${active === 'home' ? styles.tabActive : ''}`}>
             {labels.nav.home}
@@ -35,6 +29,7 @@ export function Header({ generatedAt, active }: Props) {
             {labels.nav.efficiency}
           </Link>
         </nav>
+
         <FreshnessBadge generatedAt={generatedAt} />
       </div>
     </header>

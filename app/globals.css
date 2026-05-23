@@ -1,17 +1,21 @@
 :root {
   --color-primary: #0A2E6C;
+  --color-primary-deep: #061d4a;
   --color-primary-light: #1A4B9C;
   --color-accent: #4A90D9;
   --color-accent-light: #7CB9E8;
+  --color-accent-soft: rgba(74, 144, 217, 0.12);
   --color-success: #10B981;
   --color-warning: #F59E0B;
   --color-danger: #EF4444;
 
   --color-bg: #FFFFFF;
+  --color-page: #F5F7FB;          /* subtle cool tint */
   --color-surface: #FFFFFF;
   --color-surface-alt: #F9FAFB;
   --color-border: #E5E7EB;
   --color-border-strong: #D1D5DB;
+  --color-border-accent: rgba(74, 144, 217, 0.30);
 
   --color-text: #0F172A;
   --color-text-muted: #64748B;
@@ -41,9 +45,9 @@
   --radius-xl: 16px;
   --radius-pill: 999px;
 
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --shadow-md: 0 2px 6px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 12px 28px rgba(6, 29, 74, 0.10), 0 4px 8px rgba(15, 23, 42, 0.04);
 
   --font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
 }
@@ -55,7 +59,7 @@
 html, body {
   margin: 0;
   padding: 0;
-  background: var(--color-surface-alt);
+  background: var(--color-page);
   color: var(--color-text);
   font-family: var(--font-family);
   font-size: 14px;
@@ -105,7 +109,6 @@ input, select {
   background: var(--color-gray-400);
 }
 
-/* Stale-data treatment applied at <main> level when payload is older than threshold. */
 .is-stale {
   opacity: 0.85;
   filter: saturate(0.7);

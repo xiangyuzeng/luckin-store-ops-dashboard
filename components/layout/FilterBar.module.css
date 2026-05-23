@@ -2,26 +2,27 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 18px;
+  gap: 20px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  padding: 16px 18px;
+  padding: 18px 20px;
   box-shadow: var(--shadow-sm);
 }
 
 .group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
 .label {
   color: var(--color-text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .dateRow {
@@ -38,9 +39,9 @@
   padding: 8px 12px;
   font-size: 13px;
   color: var(--color-text);
-  min-width: 150px;
-  height: 36px;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  min-width: 158px;
+  height: 38px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .input:hover,
@@ -75,11 +76,11 @@
   background: var(--color-bg);
   color: var(--color-text-muted);
   font-size: 13px;
-  height: 36px;
-  padding: 0 14px;
+  height: 38px;
+  padding: 0 16px;
   border-radius: var(--radius-md);
   margin-left: auto;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 .reset:hover {

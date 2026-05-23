@@ -1,4 +1,5 @@
 import { Header } from '@/components/layout/Header';
+import { DataInfoStrip } from '@/components/layout/DataInfoStrip';
 import { KpiCard } from '@/components/kpi/KpiCard';
 import { KpiGroup } from '@/components/kpi/KpiGroup';
 import { loadPayload } from '@/lib/payload';
@@ -20,6 +21,7 @@ export default function PreviewPage() {
   return (
     <>
       <Header generatedAt={payload.meta.generated_at} active="preview" />
+      <DataInfoStrip meta={payload.meta} />
       <main className={styles.main}>
         <div className={styles.hero}>
           <h1 className={styles.title}>{labels.preview.title}</h1>

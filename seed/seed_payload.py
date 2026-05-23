@@ -84,14 +84,15 @@ def slot_demand_factor(slot: str) -> float:
     return base + bell(8 * 60 + 30, 50, 1.0) + bell(12 * 60 + 30, 55, 0.85) + bell(15 * 60, 90, 0.25)
 
 
-def daily_orders_for_store(shop_no: str, day_ix: int) -> int:
-    """Daily order count: 500-650 base, dow effect, mild upward drift."""
+def daily_orders_for_store(shop_no: str, day_ix: int, total_days: int) -> int:
+    """Daily order count: 500-650 base, dow effect, slow drift across retention."""
     base = {"US00001": 640, "US00002": 600, "US00003": 580, "US00004": 590,
             "US00005": 560, "US00006": 540, "US00008": 520, "US00012": 500,
             "US00020": 490, "US00024": 470, "US00025": 450, "US00027": 430}.get(shop_no, 500)
     dow = (date.today() - timedelta(days=day_ix)).weekday()
     dow_mult = [1.05, 1.08, 1.10, 1.10, 1.05, 0.88, 0.78][dow]
-    drift = 1 + (40 - day_ix) * 0.002  # slight upward over retention window
+    # Recency factor — newer days slightly busier than older days, gives a visible trend.
+    drift = 1 + (total_days - day_ix) * 0.0015
     noise = random.uniform(0.92, 1.08)
     return max(50, int(base * dow_mult * drift * noise))
 
@@ -145,7 +146,7 @@ def build_daily_store_rows(stores, days):
                     "accept_response_duration": None, "make_duration": None,
                 })
                 continue
-            order_count = daily_orders_for_store(s["shop_no"], day_ix)
+            order_count = daily_orders_for_store(s["shop_no"], day_ix, days)
             pickup_count, delivery_count = split_pickup_delivery(order_count)
             # Items per order ~1.4 fresh + 0.3 purchased
             fresh = int(round(order_count * random.uniform(1.30, 1.50)))
@@ -246,7 +247,7 @@ def build_half_hour_rows(stores, days):
             opened_on = date.fromisoformat(s["opened_on"]) if s.get("opened_on") else None
             if opened_on and d < opened_on:
                 continue
-            daily_total = daily_orders_for_store(s["shop_no"], day_ix)
+            daily_total = daily_orders_for_store(s["shop_no"], day_ix, days)
             pickup_share_day = random.uniform(0.62, 0.72)
             factors = [slot_demand_factor(slot) for slot in slots]
             total = sum(factors)
@@ -324,7 +325,7 @@ def build_spu_daily_rows(stores, days):
             opened_on = date.fromisoformat(s["opened_on"]) if s.get("opened_on") else None
             if opened_on and d < opened_on:
                 continue
-            order_count = daily_orders_for_store(s["shop_no"], day_ix)
+            order_count = daily_orders_for_store(s["shop_no"], day_ix, days)
             # ~1.6 products per order (fresh + purchased combined).
             day_products = int(round(order_count * random.uniform(1.50, 1.75)))
             for spu_name, weight in SPU_MENU:
@@ -340,7 +341,7 @@ def build_spu_daily_rows(stores, days):
     return rows
 
 
-def build_payload(days: int = 40) -> dict:
+def build_payload(days: int = 90) -> dict:
     today = date.today()
     retained_from = (today - timedelta(days=days - 1)).isoformat()
     retained_to = today.isoformat()

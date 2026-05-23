@@ -1,15 +1,18 @@
-"""Per-day per-store order + product aggregates.
+"""Per-day per-store order aggregates.
 
-All timestamps in MySQL are stored UTC; we bucket to US/Eastern via CONVERT_TZ
-so the day boundary matches operations (DST-aware via MySQL's tz tables).
+Strategy (refined after live schema probe):
+  - Daily totals come from `t_order_store_fact` (cycle_type=3), which is
+    half-hourly running totals within the day. Use MAX(total_order_quantity)
+    per (shop_id, DATE(local_begin_date)) to get the end-of-day total.
+    The 23:30 bucket resets to 0 — filter it out.
+  - The store_fact table also pre-computes pickup/delivery splits, 现制
+    (self_quantity) vs 外购 (purchase_quantity) splits, the dissatisfied
+    counts (satisfaction!), and make_seconds.
+  - SPU TOP-N still comes from t_order_item.spu_name × sku_num (column is
+    `sku_num`, NOT `qty`).
+  - Per-order accept/make timings come from t_order ⋈ t_order_make.
 
-Channel codes are confirmed: 1=Mini Program, 2=Own App, 3=POS/Walk-in (自取);
-8=UberEats, 9=DoorDash, 10=Grubhub (外送).
-
-Item-category split: t_order_item.one_category_name distinguishes 现制 (freshly
-made) from 外购 (purchased goods). Categories are matched by name; collectors
-return the raw split and the formatter applies the equiv-product formula
-(equiv = fresh + 0.25 * purchased) downstream.
+All queries SELECT-only, WHERE tenant='LKUS'.
 """
 from __future__ import annotations
 
@@ -17,26 +20,33 @@ from typing import Any
 
 from ..config.settings import TENANT, assert_read_only, connect
 
-# Heuristic for fresh-made vs purchased — refined from t_order_item.one_category_name samples.
-# Keeping the list explicit so changes are reviewed in code, not patched in production.
-FRESH_CATEGORIES = ("现制", "现制饮品", "咖啡", "茶饮", "鲜萃", "Beverage")
 
+def fetch_daily_store_fact(retain_days: int = 90) -> list[dict[str, Any]]:
+    """Per (shop_id, ET-local date) daily aggregates from t_order_store_fact.
 
-def fetch_daily_orders(retain_days: int = 40) -> list[dict[str, Any]]:
-    """One row per (shop_no, ET-local date) over the retained window."""
+    Returns one row per shop-day with all the pre-aggregated columns we need:
+    order_count, pickup_count, delivery_count, fresh_made (self), purchased,
+    dissatisfied (pickup + delivery), make_seconds.
+    """
     sql = """
         SELECT
-            o.shop_number                                                   AS shop_no,
-            DATE(CONVERT_TZ(o.pay_time, 'UTC', 'US/Eastern'))               AS et_date,
-            COUNT(*)                                                        AS order_count,
-            SUM(CASE WHEN o.channel IN (1, 2, 3)  THEN 1 ELSE 0 END)        AS pickup_count,
-            SUM(CASE WHEN o.channel IN (8, 9, 10) THEN 1 ELSE 0 END)        AS delivery_count
-          FROM luckyus_sales_order.t_order o
-         WHERE o.tenant = %s
-           AND o.status = '已完成'
-           AND o.pay_time >= UTC_TIMESTAMP() - INTERVAL %s DAY
-         GROUP BY o.shop_number, et_date
-         ORDER BY o.shop_number, et_date
+            f.shop_id,
+            DATE(f.local_begin_date) AS et_date,
+            MAX(f.total_order_quantity)              AS order_count,
+            MAX(f.pickup_order_quantity)             AS pickup_count,
+            MAX(f.delivery_order_quantity)           AS delivery_count,
+            MAX(f.self_quantity)                     AS fresh_made_count,
+            MAX(f.purchase_quantity)                 AS purchased_count,
+            MAX(f.pickup_dissatisfied_order_quantity)   AS pickup_unsat,
+            MAX(f.delivery_dissatisfied_order_quantity) AS delivery_unsat,
+            MAX(f.make_seconds)                      AS make_seconds
+          FROM luckyus_sales_order.t_order_store_fact f
+         WHERE f.tenant = %s
+           AND f.cycle_type = 3
+           AND f.local_begin_date >= DATE_SUB(CURDATE(), INTERVAL %s DAY)
+         GROUP BY f.shop_id, et_date
+         HAVING order_count > 0
+         ORDER BY f.shop_id, et_date
          LIMIT 100000
     """
     assert_read_only(sql)
@@ -46,45 +56,46 @@ def fetch_daily_orders(retain_days: int = 40) -> list[dict[str, Any]]:
             return list(cur.fetchall())
 
 
-def fetch_daily_products(retain_days: int = 40) -> list[dict[str, Any]]:
-    """Per (shop_no, ET-local date) product counts: total / fresh-made / purchased."""
-    fresh_in = ", ".join(["%s"] * len(FRESH_CATEGORIES))
-    sql = f"""
-        SELECT
-            o.shop_number                                                   AS shop_no,
-            DATE(CONVERT_TZ(o.pay_time, 'UTC', 'US/Eastern'))               AS et_date,
-            SUM(i.qty)                                                      AS product_count,
-            SUM(CASE WHEN i.one_category_name IN ({fresh_in}) THEN i.qty ELSE 0 END) AS fresh_made_count,
-            SUM(CASE WHEN i.one_category_name NOT IN ({fresh_in}) OR i.one_category_name IS NULL THEN i.qty ELSE 0 END) AS purchased_count
-          FROM luckyus_sales_order.t_order o
-          JOIN luckyus_sales_order.t_order_item i ON i.order_id = o.id
-         WHERE o.tenant = %s
-           AND o.status = '已完成'
-           AND o.pay_time >= UTC_TIMESTAMP() - INTERVAL %s DAY
-         GROUP BY o.shop_number, et_date
-         ORDER BY o.shop_number, et_date
-         LIMIT 100000
+def fetch_shop_id_to_shop_no_map() -> dict[int, str]:
+    """Resolve shop_id ↔ shop_number using a recent t_order sample."""
+    sql = """
+        SELECT DISTINCT shop_id, shop_number
+          FROM luckyus_sales_order.t_order
+         WHERE tenant = %s
+           AND pay_time >= UTC_TIMESTAMP() - INTERVAL 30 DAY
+         LIMIT 1000
     """
     assert_read_only(sql)
-    params = [*FRESH_CATEGORIES, *FRESH_CATEGORIES, TENANT, retain_days]
     with connect("luckyus_sales_order") as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, params)
-            return list(cur.fetchall())
+            cur.execute(sql, (TENANT,))
+            rows = cur.fetchall()
+    return {int(r["shop_id"]): r["shop_number"] for r in rows}
 
 
-def fetch_store_day_facts(retain_days: int = 40) -> list[dict[str, Any]]:
-    """Authoritative per-store-day totals (cycle_type=3 = daily aggregate)."""
+def fetch_daily_timing(retain_days: int = 90) -> list[dict[str, Any]]:
+    """Per (shop_id, ET-local date) accept-response + make duration totals.
+
+    Defines:
+      single-order accept response  =  SUM(accept_time - pay_time) / orders
+      avg equivalent make duration  =  SUM(finish_time - accept_time) / orders
+    """
     sql = """
         SELECT
-            sf.shop_id,
-            sf.local_begin_date AS et_date,
-            sf.total_order_quantity
-          FROM luckyus_sales_order.t_order_store_fact sf
-         WHERE sf.tenant = %s
-           AND sf.cycle_type = 3
-           AND sf.local_begin_date >= DATE_SUB(CURDATE(), INTERVAL %s DAY)
-         ORDER BY sf.shop_id, sf.local_begin_date
+            o.shop_id,
+            DATE(CONVERT_TZ(o.pay_time, 'UTC', 'US/Eastern')) AS et_date,
+            COUNT(*)                                          AS orders,
+            SUM(TIMESTAMPDIFF(SECOND, o.pay_time, m.accept_time))     AS accept_secs,
+            SUM(TIMESTAMPDIFF(SECOND, m.accept_time, m.finish_time))  AS make_secs
+          FROM luckyus_sales_order.t_order o
+          JOIN luckyus_sales_order.t_order_make m ON m.order_id = o.id
+         WHERE o.tenant = %s
+           AND o.status = 90
+           AND o.pay_time >= UTC_TIMESTAMP() - INTERVAL %s DAY
+           AND m.accept_time IS NOT NULL
+           AND m.finish_time IS NOT NULL
+         GROUP BY o.shop_id, et_date
+         ORDER BY o.shop_id, et_date
          LIMIT 100000
     """
     assert_read_only(sql)
@@ -94,22 +105,23 @@ def fetch_store_day_facts(retain_days: int = 40) -> list[dict[str, Any]]:
             return list(cur.fetchall())
 
 
-def fetch_spu_daily(retain_days: int = 40) -> list[dict[str, Any]]:
-    """Per (shop_no, ET-local date, spu_name) quantity — feeds the TOP10 table."""
+def fetch_spu_daily(retain_days: int = 90) -> list[dict[str, Any]]:
+    """Per (shop_id, ET-local date, spu_name) quantity for TOP-N — note column is sku_num."""
     sql = """
         SELECT
-            o.shop_number                                                   AS shop_no,
-            DATE(CONVERT_TZ(o.pay_time, 'UTC', 'US/Eastern'))               AS et_date,
-            i.spu_name                                                      AS spu_name,
-            SUM(i.qty)                                                      AS quantity
+            o.shop_id,
+            DATE(CONVERT_TZ(o.pay_time, 'UTC', 'US/Eastern')) AS et_date,
+            i.spu_name,
+            SUM(i.sku_num)                                    AS qty
           FROM luckyus_sales_order.t_order o
           JOIN luckyus_sales_order.t_order_item i ON i.order_id = o.id
          WHERE o.tenant = %s
-           AND o.status = '已完成'
+           AND o.status = 90
            AND o.pay_time >= UTC_TIMESTAMP() - INTERVAL %s DAY
-         GROUP BY o.shop_number, et_date, i.spu_name
-         HAVING quantity > 0
-         ORDER BY o.shop_number, et_date, quantity DESC
+           AND i.spu_name IS NOT NULL
+         GROUP BY o.shop_id, et_date, i.spu_name
+         HAVING qty > 0
+         ORDER BY o.shop_id, et_date, qty DESC
          LIMIT 500000
     """
     assert_read_only(sql)

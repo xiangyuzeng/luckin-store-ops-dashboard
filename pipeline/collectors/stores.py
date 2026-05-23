@@ -1,8 +1,11 @@
 """Store directory + operating-today flag.
 
 `operating_today` = had >=1 completed order in the last 24h ET (locked decision).
-This is computed directly from t_order so the dropdown reflects real activity,
-not just the t_shop_info.status flag.
+Real schema confirms:
+  - t_shop_info column is `shop_no` (NOT shop_number — this collector was wrong before).
+  - t_order.status=90 means 已完成 (integer, not the string '已完成').
+  - Test kitchens (US00000, US99998, US99999) carry test_flag=0 and must be
+    filtered out by shop_no whitelist.
 """
 from __future__ import annotations
 
@@ -10,10 +13,13 @@ from typing import Any
 
 from ..config.settings import TENANT, assert_read_only, connect
 
+# Real production shops (manually curated whitelist — test_flag is unreliable).
+EXCLUDED_TEST_SHOPS = {"US00000", "US99998", "US99999"}
+
 
 def fetch_store_directory() -> list[dict[str, Any]]:
     sql_master = """
-        SELECT shop_number, shop_name, status
+        SELECT shop_no, shop_name, status, set_up_time
           FROM luckyus_opshop.t_shop_info
          WHERE tenant = %s
            AND status = 1
@@ -25,7 +31,7 @@ def fetch_store_directory() -> list[dict[str, Any]]:
         SELECT DISTINCT shop_number
           FROM luckyus_sales_order.t_order
          WHERE tenant = %s
-           AND status = '已完成'
+           AND status = 90
            AND pay_time >= UTC_TIMESTAMP() - INTERVAL 24 HOUR
          LIMIT 5000
     """
@@ -44,9 +50,13 @@ def fetch_store_directory() -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     for r in master:
+        shop_no = r["shop_no"]
+        if shop_no in EXCLUDED_TEST_SHOPS:
+            continue
         out.append({
-            "shop_no": r["shop_number"],
+            "shop_no": shop_no,
             "shop_name": r["shop_name"],
-            "operating_today": r["shop_number"] in active,
+            "set_up_time": r.get("set_up_time"),
+            "operating_today": shop_no in active,
         })
     return out

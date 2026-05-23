@@ -1,9 +1,10 @@
-"""End-to-end pipeline: read DB → aggregate → write data/payload.json.
+"""End-to-end pipeline: read MySQL → aggregate → write data/payload.json.
 
-Run:
+Run on an internal host that can reach the four read replicas
+(aws-luckyus-{salesorder,opshop,scm-shopstock,iluckyhealth}-rw) and has AWS
+credentials with secretsmanager:GetSecretValue for MYSQL_SECRET_NAME.
+
     MYSQL_SECRET_NAME=<your-secret> python3 -m pipeline.frontend_formatter
-
-The script writes `data/payload.json` at the repo root and is idempotent.
 """
 from __future__ import annotations
 
@@ -13,20 +14,15 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .aggregator import (
-    build_daily_store_rows,
-    normalize_half_hour_efficiency,
-    normalize_half_hour_sales,
-    normalize_spu_daily,
-    rollup_durations_into_daily,
+from .collectors.efficiency import (
+    fetch_half_hour_running_totals,
+    fetch_half_hour_timing,
 )
-from .collectors.efficiency import fetch_half_hour_efficiency, fetch_half_hour_sales
-from .collectors.health import fetch_open_store_counts, fetch_tenant_order_counters
 from .collectors.orders import (
-    fetch_daily_orders,
-    fetch_daily_products,
+    fetch_daily_store_fact,
+    fetch_daily_timing,
+    fetch_shop_id_to_shop_no_map,
     fetch_spu_daily,
-    fetch_store_day_facts,
 )
 from .collectors.spoilage import fetch_daily_spoilage
 from .collectors.stores import fetch_store_directory
@@ -36,126 +32,289 @@ HALF_HOUR_RETAIN_DAYS = int(os.environ.get("HALF_HOUR_RETAIN_DAYS", "3"))
 OUTPUT = Path(__file__).resolve().parent.parent / "data" / "payload.json"
 TENANT = os.environ.get("LUCKIN_TENANT", "LKUS")
 
-# Mirrors lib/metrics.ts. The pipeline DOES NOT compute pending metrics — it just
-# declares the registry so the client always sees a consistent set.
+# Mirrors lib/metrics.ts. With real production data, satisfaction is
+# CONFIRMED (source = t_order_store_fact.{pickup,delivery}_dissatisfied_order_quantity).
 METRICS: list[dict[str, Any]] = [
-    {"key": "orderCount",         "label_zh": "订单数量",           "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "已完成订单数 (t_order.status=已完成)"},
-    {"key": "productCount",       "label_zh": "商品数量",           "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "已完成订单的商品数 (t_order_item ⋈ t_order)"},
-    {"key": "satisfaction",       "label_zh": "满意度",             "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "1 − 不满意订单数 / 订单数"},
-    {"key": "hourlyCups",         "label_zh": "小时杯量",           "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "等效商品数 / 总工时"},
-    {"key": "perfHourlyCups",     "label_zh": "绩效小时杯量",       "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "等效商品数 / (考勤工时 − 会议 − 培训 − 帮带训)"},
-    {"key": "hourlyCupAchieve",   "label_zh": "小时杯量达成比",     "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "(绩效小时杯量 / 理论小时杯量) × 100%"},
-    {"key": "qcPassRate",         "label_zh": "品控稽核达标率",     "format": "percent",  "comparisons": ["sequential"],   "good_direction": "up",   "source": "pending",   "formula_zh": "≥80分稽核任务数 / 稽核任务数"},
-    {"key": "qcAvgScore",         "label_zh": "品控稽核平均分",     "format": "score",    "comparisons": ["sequential"],   "good_direction": "up",   "source": "pending",   "formula_zh": "稽核总分 / 稽核任务数"},
-    {"key": "materialLossRate",   "label_zh": "原料损耗率",         "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "down", "source": "partial",   "formula_zh": "(实际 − 理论消耗成本) / 理论消耗成本"},
-    {"key": "avgDailyProducts",   "label_zh": "单店日均商品数",     "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "t_order_store_fact 商品数 / 运营天数"},
-    {"key": "avgDailyFreshMade",  "label_zh": "单店日均现制商品数", "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "t_order_item 现制类目计数 / 运营天数"},
-    {"key": "avgDailyEquiv",      "label_zh": "单店日均等效商品数", "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "(现制 + 0.25 × 外购) / 运营天数"},
-    {"key": "efficiencyDuration", "label_zh": "效能时长",           "format": "duration", "comparisons": ["wow", "mom"],   "good_direction": "down", "source": "confirmed", "formula_zh": "单均接单响应 + 平均等效制作"},
-    {"key": "pickupCount",        "label_zh": "自取订单数",         "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "channel ∈ {1,2,3}"},
-    {"key": "deliveryCount",      "label_zh": "外送订单数",         "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "channel ∈ {8,9,10}"},
-    {"key": "freshMadeCount",     "label_zh": "现制商品数",         "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "t_order_item.one_category_name ∈ 现制类目"},
+    {"key": "orderCount",         "label_zh": "订单数量",          "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "已完成订单数 (t_order.status=90)"},
+    {"key": "productCount",       "label_zh": "商品数量",          "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "self_quantity + purchase_quantity 每店每日"},
+    {"key": "satisfaction",       "label_zh": "满意度",            "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "1 − (自取不满意 + 外送不满意) / 订单总数"},
+    {"key": "hourlyCups",         "label_zh": "小时杯量",          "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "等效商品数 / 总工时（考勤源待接入）"},
+    {"key": "perfHourlyCups",     "label_zh": "绩效小时杯量",      "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "等效商品数 / (考勤工时 − 会议 − 培训 − 帮带训)"},
+    {"key": "hourlyCupAchieve",   "label_zh": "小时杯量达成比",    "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "(绩效小时杯量 / 理论小时杯量) × 100%"},
+    {"key": "qcPassRate",         "label_zh": "品控稽核达标率",    "format": "percent",  "comparisons": ["sequential"],   "good_direction": "up",   "source": "pending",   "formula_zh": "≥80分稽核任务数 / 稽核任务数（QC源待接入）"},
+    {"key": "qcAvgScore",         "label_zh": "品控稽核平均分",    "format": "score",    "comparisons": ["sequential"],   "good_direction": "up",   "source": "pending",   "formula_zh": "稽核总分 / 稽核任务数"},
+    {"key": "materialLossRate",   "label_zh": "原料损耗率",        "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "down", "source": "partial",   "formula_zh": "(实际 − 理论消耗成本) / 理论消耗成本（BOM 理论值待接入）"},
+    {"key": "avgDailyProducts",   "label_zh": "单店日均商品数",    "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "t_order_store_fact 商品数 / 运营天数"},
+    {"key": "avgDailyFreshMade",  "label_zh": "单店日均现制商品数","format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "self_quantity / 运营天数"},
+    {"key": "avgDailyEquiv",      "label_zh": "单店日均等效商品数","format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "(现制 + 0.25 × 外购) / 运营天数"},
+    {"key": "efficiencyDuration", "label_zh": "效能时长",          "format": "duration", "comparisons": ["wow", "mom"],   "good_direction": "down", "source": "confirmed", "formula_zh": "单均接单响应 + 平均等效制作"},
+    {"key": "pickupCount",        "label_zh": "自取订单数",        "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "channel ∈ {1,2,3}"},
+    {"key": "deliveryCount",      "label_zh": "外送订单数",        "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "channel ∈ {8,9,10}"},
+    {"key": "freshMadeCount",     "label_zh": "现制商品数",        "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "t_order_item.one_category_name = 'Drink'"},
 ]
 
-# City/region overlay — until t_shop_info exposes a region field for the NA tenant,
-# we apply this static mapping. Update when the master adds the column.
+# Manhattan-neighborhood overlay since t_shop_info.country_name etc. are NULL.
 STORE_GEO: dict[str, dict[str, str]] = {
-    "US00001": {"city": "New York", "region": "Manhattan – Lower"},
-    "US00002": {"city": "New York", "region": "Manhattan – Midtown"},
-    "US00003": {"city": "New York", "region": "Manhattan – Lower"},
+    "US00001": {"city": "New York", "region": "Manhattan – Greenwich Village"},
+    "US00002": {"city": "New York", "region": "Manhattan – Chelsea / NoMad"},
+    "US00003": {"city": "New York", "region": "Manhattan – Financial District"},
     "US00004": {"city": "New York", "region": "Manhattan – Midtown"},
     "US00005": {"city": "New York", "region": "Manhattan – Midtown"},
-    "US00006": {"city": "New York", "region": "Manhattan – Lower"},
+    "US00006": {"city": "New York", "region": "Manhattan – Financial District"},
+    "US00007": {"city": "New York", "region": "Manhattan – Upper West Side"},
     "US00008": {"city": "New York", "region": "Manhattan – Midtown"},
-    "US00012": {"city": "New York", "region": "Manhattan – Chelsea"},
+    "US00010": {"city": "New York", "region": "Manhattan – Greenwich Village"},
+    "US00012": {"city": "New York", "region": "Manhattan – Chelsea / NoMad"},
+    "US00015": {"city": "New York", "region": "Manhattan – Midtown"},
+    "US00018": {"city": "New York", "region": "Manhattan – Midtown"},
+    "US00019": {"city": "New York", "region": "Manhattan – Chelsea / NoMad"},
     "US00020": {"city": "New York", "region": "Manhattan – Gramercy"},
+    "US00022": {"city": "New York", "region": "Manhattan – Chelsea / NoMad"},
     "US00024": {"city": "New York", "region": "Manhattan – Gramercy"},
-    "US00025": {"city": "New York", "region": "Manhattan – Lower"},
+    "US00025": {"city": "New York", "region": "Manhattan – Lower Manhattan"},
     "US00027": {"city": "New York", "region": "Manhattan – Midtown"},
 }
 
 
-def date_window(days: int) -> list[str]:
-    today = date.today()
-    return [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+def _to_int(x):
+    return 0 if x is None else int(x)
+
+
+def _to_float(x):
+    return 0.0 if x is None else float(x)
+
+
+def _non_op(shop_no: str, d: str) -> dict[str, Any]:
+    return {
+        "shop_no": shop_no, "date": d, "operating": False,
+        "order_count": None, "pickup_count": None, "delivery_count": None,
+        "product_count": None, "fresh_made_count": None, "purchased_count": None,
+        "equiv_product_count": None, "avg_daily_products": None,
+        "avg_daily_fresh_made": None, "avg_daily_equiv": None,
+        "satisfaction": None, "qc_pass_rate": None, "qc_avg_score": None,
+        "hourly_cup_achieve": None, "material_loss_rate": None,
+        "labor_hours_total": None, "labor_hours_productive": None,
+        "accept_response_duration": None, "make_duration": None,
+    }
 
 
 def main() -> None:
     print(f"[refresh] tenant={TENANT} retain_days={RETAIN_DAYS} half_hour_days={HALF_HOUR_RETAIN_DAYS}")
 
-    # 1. Collect.
     print("[collect] store directory…")
-    stores_raw = fetch_store_directory()
-    print(f"  → {len(stores_raw)} stores in master")
+    master = fetch_store_directory()
+    print(f"  → {len(master)} stores in master")
 
-    print("[collect] daily orders…")
-    orders = fetch_daily_orders(RETAIN_DAYS)
-    print(f"  → {len(orders)} (shop_no, et_date) rows")
+    print("[collect] shop_id ↔ shop_no map…")
+    shop_id_to_no = fetch_shop_id_to_shop_no_map()
+    print(f"  → {len(shop_id_to_no)} ids resolved")
 
-    print("[collect] daily products…")
-    products = fetch_daily_products(RETAIN_DAYS)
-    print(f"  → {len(products)} (shop_no, et_date) product rows")
+    print("[collect] daily store-fact aggregates…")
+    daily_facts = fetch_daily_store_fact(RETAIN_DAYS)
+    print(f"  → {len(daily_facts)} (shop_id, et_date) rows")
 
-    print("[collect] spoilage…")
-    spoilage = fetch_daily_spoilage(RETAIN_DAYS)
-    print(f"  → {len(spoilage)} rows")
-
-    print("[collect] half-hour efficiency…")
-    half_hour_eff = fetch_half_hour_efficiency(HALF_HOUR_RETAIN_DAYS)
-    print(f"  → {len(half_hour_eff)} slot rows")
-
-    print("[collect] half-hour sales…")
-    half_hour_sales = fetch_half_hour_sales(HALF_HOUR_RETAIN_DAYS)
-    print(f"  → {len(half_hour_sales)} slot rows")
+    print("[collect] daily timing (accept/make)…")
+    daily_timing = fetch_daily_timing(RETAIN_DAYS)
+    print(f"  → {len(daily_timing)} rows")
 
     print("[collect] SPU daily…")
-    spu_raw = fetch_spu_daily(RETAIN_DAYS)
-    print(f"  → {len(spu_raw)} (shop, date, spu) rows")
+    spu_daily = fetch_spu_daily(RETAIN_DAYS)
+    print(f"  → {len(spu_daily)} (shop, date, spu) rows")
 
-    # Health cross-check (best-effort; not part of payload).
+    print("[collect] half-hour running totals…")
+    halfhour_running = fetch_half_hour_running_totals(HALF_HOUR_RETAIN_DAYS)
+    print(f"  → {len(halfhour_running)} rows")
+
+    print("[collect] half-hour timing…")
+    halfhour_timing = fetch_half_hour_timing(HALF_HOUR_RETAIN_DAYS)
+    print(f"  → {len(halfhour_timing)} rows")
+
+    print("[collect] spoilage…")
     try:
-        _ = fetch_open_store_counts(RETAIN_DAYS)
-        _ = fetch_tenant_order_counters(RETAIN_DAYS)
+        spoilage = fetch_daily_spoilage(RETAIN_DAYS)
     except Exception as exc:  # noqa: BLE001
-        print(f"[warn] health cross-check failed (non-fatal): {exc}")
+        print(f"  [warn] spoilage failed: {exc}")
+        spoilage = []
+    print(f"  → {len(spoilage)} rows")
 
-    # 2. Stores with geo overlay.
-    stores = []
-    for s in stores_raw:
-        geo = STORE_GEO.get(s["shop_no"], {"city": "New York", "region": "Manhattan"})
-        stores.append({
-            "shop_no": s["shop_no"],
-            "shop_name": s["shop_name"],
-            "city": geo["city"],
-            "region": geo["region"],
-            "operating_today": bool(s["operating_today"]),
+    # ── Build daily store rows ──────────────────────────────────────
+    timing_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in daily_timing}
+    facts_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in daily_facts}
+    dates = sorted({str(r["et_date"]) for r in daily_facts})
+    if not dates:
+        # No real data — bail rather than ship an empty payload.
+        raise RuntimeError("No daily_facts data returned; aborting refresh.")
+
+    daily_rows: list[dict[str, Any]] = []
+    for m in master:
+        shop_no = m["shop_no"]
+        # Find this shop's id from any data row containing it.
+        shop_id = next((sid for sid, sno in shop_id_to_no.items() if sno == shop_no), None)
+        opened_on = m["set_up_time"]
+        opened_iso = str(opened_on)[:10] if opened_on else None
+
+        for d in dates:
+            if opened_iso and d < opened_iso:
+                daily_rows.append(_non_op(shop_no, d))
+                continue
+            if shop_id is None:
+                daily_rows.append(_non_op(shop_no, d))
+                continue
+            f = facts_by.get((shop_id, d))
+            if not f or _to_int(f["order_count"]) <= 0:
+                daily_rows.append(_non_op(shop_no, d))
+                continue
+            orders = _to_int(f["order_count"])
+            pickup = _to_int(f["pickup_count"])
+            delivery = _to_int(f["delivery_count"])
+            fresh = _to_int(f["fresh_made_count"])
+            purchased = _to_int(f["purchased_count"])
+            equiv = int(round(fresh + 0.25 * purchased))
+            products = fresh + purchased
+            unsat = _to_int(f["pickup_unsat"]) + _to_int(f["delivery_unsat"])
+
+            t = timing_by.get((shop_id, d))
+            if t and _to_int(t["orders"]) > 0:
+                accept_total = _to_float(t["accept_secs"])
+                make_total = _to_float(t["make_secs"])
+                accept_weight = _to_int(t["orders"])
+                make_weight = equiv
+            else:
+                accept_total = make_total = 0.0
+                accept_weight = make_weight = 0
+
+            daily_rows.append({
+                "shop_no": shop_no, "date": d, "operating": True,
+                "order_count": orders,
+                "pickup_count": pickup,
+                "delivery_count": delivery,
+                "product_count": products,
+                "fresh_made_count": fresh,
+                "purchased_count": purchased,
+                "equiv_product_count": equiv,
+                "avg_daily_products": products,
+                "avg_daily_fresh_made": fresh,
+                "avg_daily_equiv": equiv,
+                "satisfaction": {"num": orders - unsat, "den": orders},
+                "qc_pass_rate": None,
+                "qc_avg_score": None,
+                "hourly_cup_achieve": None,
+                "material_loss_rate": None,
+                "labor_hours_total": None,
+                "labor_hours_productive": None,
+                "accept_response_duration": (
+                    {"total_seconds": round(accept_total, 2), "weight": accept_weight}
+                    if accept_weight > 0 else None
+                ),
+                "make_duration": (
+                    {"total_seconds": round(make_total, 2), "weight": make_weight}
+                    if make_weight > 0 else None
+                ),
+            })
+
+    # ── Half-hour SALES rows (deltas of running totals) ─────────────
+    facts_sorted: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for r in halfhour_running:
+        ts = str(r["local_begin_date"])
+        date_part = ts[:10]
+        slot = ts[11:16]
+        facts_sorted.setdefault((int(r["shop_id"]), date_part), []).append({
+            "slot": slot,
+            "total": _to_int(r["total_order_quantity"]),
+            "pickup": _to_int(r["pickup_order_quantity"]),
+            "delivery": _to_int(r["delivery_order_quantity"]),
+            "self": _to_int(r["self_quantity"]),
+            "purchase": _to_int(r["purchase_quantity"]),
         })
 
-    # 3. Aggregate.
-    dates = date_window(RETAIN_DAYS)
-    daily_rows = build_daily_store_rows(stores, orders, products, spoilage, dates)
-    rollup_durations_into_daily(daily_rows, half_hour_eff)
-    half_hour_eff_norm = normalize_half_hour_efficiency(half_hour_eff)
-    half_hour_sales_norm = normalize_half_hour_sales(half_hour_sales)
-    spu_norm = normalize_spu_daily(spu_raw)
+    sales_rows: list[dict[str, Any]] = []
+    for (shop_id, d), buckets in facts_sorted.items():
+        shop_no = shop_id_to_no.get(shop_id)
+        if not shop_no:
+            continue
+        buckets.sort(key=lambda b: b["slot"])
+        prev = {"total": 0, "pickup": 0, "delivery": 0, "self": 0, "purchase": 0}
+        for b in buckets:
+            if b["total"] < prev["total"]:
+                continue  # 23:30 reset bucket
+            sales_rows.append({
+                "shop_no": shop_no, "date": d, "slot": b["slot"],
+                "pickup_count":   max(0, b["pickup"]   - prev["pickup"]),
+                "delivery_count": max(0, b["delivery"] - prev["delivery"]),
+                "fresh_made_count": max(0, b["self"]     - prev["self"]),
+                "purchased_count":  max(0, b["purchase"] - prev["purchase"]),
+            })
+            prev = b
 
-    # 4. Build payload.
+    # ── Half-hour EFFICIENCY rows (direct timings) ──────────────────
+    eff_rows: list[dict[str, Any]] = []
+    for r in halfhour_timing:
+        shop_no = shop_id_to_no.get(int(r["shop_id"]))
+        if not shop_no:
+            continue
+        orders = _to_int(r["orders"])
+        eff_rows.append({
+            "shop_no": shop_no,
+            "date": str(r["et_date"]),
+            "slot": r["slot"],
+            "accept_response": (
+                {"total_seconds": _to_float(r["accept_secs"]), "weight": orders}
+                if orders > 0 else None
+            ),
+            "make_duration": (
+                {"total_seconds": _to_float(r["make_secs"]), "weight": orders}
+                if orders > 0 else None
+            ),
+            "order_count": orders,
+            "equiv_product_count": 0,
+        })
+
+    # ── SPU daily rows ──────────────────────────────────────────────
+    spu_rows: list[dict[str, Any]] = []
+    for r in spu_daily:
+        shop_no = shop_id_to_no.get(int(r["shop_id"]))
+        if not shop_no:
+            continue
+        spu_rows.append({
+            "shop_no": shop_no,
+            "date": str(r["et_date"]),
+            "spu_name": r["spu_name"],
+            "quantity": int(r["qty"]),
+        })
+
+    # ── Store directory ─────────────────────────────────────────────
+    latest = dates[-1]
+    operating_today_ids = {r["shop_no"] for r in daily_rows if r["date"] == latest and r["operating"]}
+    stores: list[dict[str, Any]] = []
+    for m in master:
+        shop_no = m["shop_no"]
+        geo = STORE_GEO.get(shop_no, {"city": "New York", "region": "Manhattan"})
+        opened_on = str(m["set_up_time"])[:10] if m["set_up_time"] else None
+        stores.append({
+            "shop_no": shop_no,
+            "shop_name": m["shop_name"],
+            "city": geo["city"],
+            "region": geo["region"],
+            "operating_today": shop_no in operating_today_ids,
+            **({"opened_on": opened_on} if opened_on else {}),
+        })
+
     payload = {
         "meta": {
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tenant": TENANT,
             "timezone": "America/New_York",
-            "retained_from": dates[0] if dates else date.today().isoformat(),
-            "retained_to": dates[-1] if dates else date.today().isoformat(),
+            "retained_from": dates[0],
+            "retained_to": dates[-1],
             "schema_version": 1,
             "source_status": {m["key"]: m["source"] for m in METRICS},
         },
         "stores": stores,
         "metrics": METRICS,
         "daily_store_rows": daily_rows,
-        "half_hour_rows": half_hour_eff_norm,
-        "half_hour_sales_rows": half_hour_sales_norm,
-        "spu_daily_rows": spu_norm,
+        "half_hour_rows": eff_rows,
+        "half_hour_sales_rows": sales_rows,
+        "spu_daily_rows": spu_rows,
     }
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
@@ -163,6 +322,9 @@ def main() -> None:
         json.dump(payload, fh, ensure_ascii=False, separators=(",", ":"))
     size_kb = OUTPUT.stat().st_size / 1024
     print(f"[done] wrote {OUTPUT} ({size_kb:.1f} KB)")
+    print(f"  stores={len(stores)}  operating_today={len(operating_today_ids)}")
+    print(f"  daily_rows={len(daily_rows)}  half_hour_eff={len(eff_rows)}  "
+          f"half_hour_sales={len(sales_rows)}  spu_daily_rows={len(spu_rows)}")
 
 
 if __name__ == "__main__":

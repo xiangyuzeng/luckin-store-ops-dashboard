@@ -48,7 +48,12 @@ def fetch_half_hour_running_totals(retain_days: int = 3) -> list[dict[str, Any]]
 
 
 def fetch_half_hour_timing(retain_days: int = 3) -> list[dict[str, Any]]:
-    """Per (shop_id, ET-date, half-hour slot) timing rollups."""
+    """Per (shop_id, ET-date, half-hour slot) timing rollups.
+
+    Note: the literal % inside DATE_FORMAT's pattern is doubled (%%) because
+    pymysql renders parameterized queries via Python %-formatting; an
+    un-escaped %H would be read as a format placeholder.
+    """
     sql = """
         SELECT
             o.shop_id,
@@ -57,7 +62,7 @@ def fetch_half_hour_timing(retain_days: int = 3) -> list[dict[str, Any]]:
               FROM_UNIXTIME(
                 FLOOR(UNIX_TIMESTAMP(CONVERT_TZ(o.pay_time, 'UTC', 'US/Eastern')) / 1800) * 1800
               ),
-              '%H:%i'
+              '%%H:%%i'
             )                                                 AS slot,
             COUNT(*)                                          AS orders,
             SUM(TIMESTAMPDIFF(SECOND, o.pay_time, m.accept_time))     AS accept_secs,

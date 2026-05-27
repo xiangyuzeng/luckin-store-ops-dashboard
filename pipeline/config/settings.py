@@ -6,14 +6,16 @@ read from `MYSQL_SECRET_NAME` — there is no hardcoded default. This keeps the
 real secret identifier out of the codebase and forces the runner to set it
 explicitly per environment.
 
-Expected secret payload (JSON):
+Expected secret payload (JSON) — matches the schema used by the canonical
+`collector/mysql` secret that luckin-ops-dashboard and luckin-efficiency-dashboard
+already consume:
 
     {
       "host":     "...",
       "port":     3306,
-      "user":     "...",
+      "username": "...",
       "password": "...",
-      "database": "luckyus_iluckyhealth"   // (default DB; collectors override)
+      "dbname":   "luckyus_iluckyhealth"   // optional (default DB; collectors override)
     }
 """
 from __future__ import annotations
@@ -77,13 +79,18 @@ def load_credentials() -> DbCredentials:
             database=os.environ.get("MYSQL_DATABASE", "luckyus_iluckyhealth"),
         )
     # Path A (default): AWS Secrets Manager via MYSQL_SECRET_NAME.
+    # The canonical secret schema uses `username` and `dbname`; older / hand-rolled
+    # secrets sometimes use `user` and `database`, so accept both.
     raw = _read_secret()
+    user = raw.get("username") or raw.get("user")
+    if not user:
+        raise RuntimeError("Secret has neither 'username' nor 'user' key")
     return DbCredentials(
         host=raw["host"],
         port=int(raw.get("port", 3306)),
-        user=raw["user"],
+        user=user,
         password=raw["password"],
-        database=raw.get("database", "luckyus_iluckyhealth"),
+        database=raw.get("dbname") or raw.get("database") or "luckyus_iluckyhealth",
     )
 
 

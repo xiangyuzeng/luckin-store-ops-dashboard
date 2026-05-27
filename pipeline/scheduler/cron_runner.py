@@ -19,7 +19,13 @@ from pathlib import Path
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from ..config.settings import GITHUB_FILE_PATH, LOG_DIR
+from ..config.settings import (
+    DAILY_HOUR,
+    DAILY_MINUTE,
+    DAILY_TIMEZONE,
+    GITHUB_FILE_PATH,
+    LOG_DIR,
+)
 from ..frontend_formatter import main as run_formatter
 from ..sender.github_pusher import push_file
 
@@ -59,12 +65,15 @@ def main() -> None:
     scheduler = BlockingScheduler(timezone="UTC")
     scheduler.add_job(
         run_daily,
-        CronTrigger(hour=9, minute=0, timezone="UTC"),
+        CronTrigger(hour=DAILY_HOUR, minute=DAILY_MINUTE, timezone=DAILY_TIMEZONE),
         id="store_ops_daily",
         name="store-ops daily refresh",
         misfire_grace_time=3600,
     )
-    logger.info("scheduler started; daily refresh at 09:00 UTC")
+    logger.info(
+        "scheduler started; daily refresh at %02d:%02d %s",
+        DAILY_HOUR, DAILY_MINUTE, DAILY_TIMEZONE,
+    )
     run_daily()  # immediate first run on container startup
     try:
         scheduler.start()

@@ -94,16 +94,52 @@ def load_credentials() -> DbCredentials:
     )
 
 
+# Per-database hostname resolution. The four databases the collectors query
+# live on four separate RDS instances in production; the AWS Secrets Manager
+# secret only carries one host (whichever instance was originally registered),
+# so we need to redirect each connect() call to the right endpoint.
+#
+# Resolution order:
+#   1. Per-database env var (e.g. OPSHOP_HOST=...)         — explicit override
+#   2. The internal alias `aws-luckyus-{service}-rw`        — default
+#   3. The host field on the AWS secret                     — fallback
+#
+# Override in .env if your VPC's DNS uses different names.
+_DB_HOST_DEFAULTS: dict[str, str] = {
+    "luckyus_opshop":        "aws-luckyus-opshop-rw",
+    "luckyus_sales_order":   "aws-luckyus-salesorder-rw",
+    "luckyus_scm_shopstock": "aws-luckyus-scm-shopstock-rw",
+    "luckyus_iluckyhealth":  "aws-luckyus-iluckyhealth-rw",
+}
+_DB_HOST_ENV_KEYS: dict[str, str] = {
+    "luckyus_opshop":        "OPSHOP_HOST",
+    "luckyus_sales_order":   "SALESORDER_HOST",
+    "luckyus_scm_shopstock": "SCM_SHOPSTOCK_HOST",
+    "luckyus_iluckyhealth":  "ILUCKYHEALTH_HOST",
+}
+
+
+def _resolve_host(database: str, secret_host: str) -> str:
+    env_key = _DB_HOST_ENV_KEYS.get(database)
+    if env_key:
+        override = os.environ.get(env_key)
+        if override:
+            return override
+    return _DB_HOST_DEFAULTS.get(database, secret_host)
+
+
 def connect(database: str | None = None):
     """Return a pymysql connection. SELECT-only; the pipeline never writes."""
     import pymysql  # lazy import
     creds = load_credentials()
+    target_db = database or creds.database
+    host = _resolve_host(target_db, creds.host)
     return pymysql.connect(
-        host=creds.host,
+        host=host,
         port=creds.port,
         user=creds.user,
         password=creds.password,
-        database=database or creds.database,
+        database=target_db,
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,  # type: ignore[union-attr]
         autocommit=True,

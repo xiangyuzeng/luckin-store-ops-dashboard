@@ -12,8 +12,7 @@ The public site never touches a database.
 | `collectors/stores.py`       | Store directory + `operating_today` (any completed order in last 24h ET). |
 | `collectors/orders.py`       | Per-day per-store order/product counts, SPU quantities. |
 | `collectors/efficiency.py`   | Per-half-hour efficiency timings + per-half-hour sales (channel + category split). |
-| `collectors/spoilage.py`     | Spoilage events (reason `015`). Numerator only — theoretical denominator pending. |
-| `collectors/health.py`       | `t_collect_*_inter` cross-check (non-blocking). |
+| `collectors/spoilage.py`     | Spoilage events (reason `015`). Numerator only — theoretical denominator pending. Returns rows keyed by `shop_dept_id`; translate to `shop_no` via `t_shop_info.dept_id` when wiring the BOM denominator. |
 | `aggregator.py`              | Joins collectors into per-store-day rows + half-hour rollups. |
 | `frontend_formatter.py`      | Writes `data/payload.json` matching `lib/types.ts`. |
 | `schema_probe.py`            | Discovers candidate tables for QC / labor / rating / BOM. Writes `pipeline/schema_map.json`. |

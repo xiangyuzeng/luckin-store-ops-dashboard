@@ -10,3 +10,4 @@ out
 __pycache__
 *.pyc
 pipeline/schema_map.json
+pipeline/logs/

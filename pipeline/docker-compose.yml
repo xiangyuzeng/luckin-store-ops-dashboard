@@ -1,0 +1,18 @@
+# Run from the pipeline/ directory:
+#   docker compose up -d --build
+# .env must live next to this file (see .env.example).
+services:
+  pipeline:
+    build:
+      context: ..
+      dockerfile: pipeline/Dockerfile
+    container_name: luckin-store-ops-pipeline
+    env_file: .env
+    restart: always
+    volumes:
+      - ./logs:/workspace/logs
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

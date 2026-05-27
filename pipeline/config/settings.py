@@ -27,6 +27,17 @@ DEFAULT_REGION = os.environ.get("AWS_REGION", "us-east-1")
 TENANT = os.environ.get("LUCKIN_TENANT", "LKUS")
 US_EASTERN_SQL = "CONVERT_TZ({col}, 'UTC', 'US/Eastern')"
 
+# GitHub push config — consumed by pipeline/sender/github_pusher.py.
+# Required when running the in-container scheduler; the legacy refresh.sh
+# uses `git push` and ignores these.
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "xiangyuzeng/luckin-store-ops-dashboard")
+GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
+GITHUB_FILE_PATH = os.environ.get("GITHUB_FILE_PATH", "data/payload.json")
+
+# Where the scheduler writes its log file. Inside Docker this is mounted as a volume.
+LOG_DIR = os.environ.get("LOG_DIR", "logs")
+
 
 @dataclass(frozen=True)
 class DbCredentials:

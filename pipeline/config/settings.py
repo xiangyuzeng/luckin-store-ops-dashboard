@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 DEFAULT_REGION = os.environ.get("AWS_REGION", "us-east-1")
@@ -94,29 +95,48 @@ def load_credentials() -> DbCredentials:
     )
 
 
-# Per-database hostname resolution. The four databases the collectors query
+# Per-database host resolution. The four databases the collectors query
 # live on four separate RDS instances in production; the AWS Secrets Manager
 # secret only carries one host (whichever instance was originally registered),
 # so we need to redirect each connect() call to the right endpoint.
 #
 # Resolution order:
-#   1. Per-database env var (e.g. OPSHOP_HOST=...)         — explicit override
-#   2. The internal alias `aws-luckyus-{service}-rw`        — default
-#   3. The host field on the AWS secret                     — fallback
+#   1. Per-database env var (e.g. OPSHOP_HOST=...)               — explicit override
+#   2. RDS instance ID from rds_instances.json + boto3 lookup    — default
+#   3. The host field on the AWS secret                          — fallback
 #
-# Override in .env if your VPC's DNS uses different names.
-_DB_HOST_DEFAULTS: dict[str, str] = {
-    "luckyus_opshop":        "aws-luckyus-opshop-rw",
-    "luckyus_sales_order":   "aws-luckyus-salesorder-rw",
-    "luckyus_scm_shopstock": "aws-luckyus-scm-shopstock-rw",
-    "luckyus_iluckyhealth":  "aws-luckyus-iluckyhealth-rw",
-}
+# Instance IDs live in pipeline/config/rds_instances.json so the data (DB →
+# instance mapping) is decoupled from the resolver logic.
+_RDS_INSTANCES_FILE = Path(__file__).resolve().parent / "rds_instances.json"
 _DB_HOST_ENV_KEYS: dict[str, str] = {
     "luckyus_opshop":        "OPSHOP_HOST",
     "luckyus_sales_order":   "SALESORDER_HOST",
     "luckyus_scm_shopstock": "SCM_SHOPSTOCK_HOST",
     "luckyus_iluckyhealth":  "ILUCKYHEALTH_HOST",
 }
+
+_db_to_instance_cache: dict[str, str] | None = None
+_instance_to_endpoint_cache: dict[str, str] = {}
+
+
+def _load_rds_instance_map() -> dict[str, str]:
+    global _db_to_instance_cache
+    if _db_to_instance_cache is None:
+        with _RDS_INSTANCES_FILE.open(encoding="utf-8") as f:
+            _db_to_instance_cache = json.load(f)
+    return _db_to_instance_cache
+
+
+def _rds_endpoint(instance_id: str) -> str:
+    """Look up the live endpoint for an RDS instance ID. Cached per process."""
+    if instance_id in _instance_to_endpoint_cache:
+        return _instance_to_endpoint_cache[instance_id]
+    import boto3  # lazy import
+    rds = boto3.client("rds", region_name=DEFAULT_REGION)
+    resp = rds.describe_db_instances(DBInstanceIdentifier=instance_id)
+    endpoint = resp["DBInstances"][0]["Endpoint"]["Address"]
+    _instance_to_endpoint_cache[instance_id] = endpoint
+    return endpoint
 
 
 def _resolve_host(database: str, secret_host: str) -> str:
@@ -125,7 +145,10 @@ def _resolve_host(database: str, secret_host: str) -> str:
         override = os.environ.get(env_key)
         if override:
             return override
-    return _DB_HOST_DEFAULTS.get(database, secret_host)
+    instance_id = _load_rds_instance_map().get(database)
+    if instance_id:
+        return _rds_endpoint(instance_id)
+    return secret_host
 
 
 def connect(database: str | None = None):

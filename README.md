@@ -90,30 +90,38 @@ confirmed:
 
 ## Refresh paths
 
-Three options for keeping `data/payload.json` fresh — pick whichever fits your ops:
+### A. Docker on an internal host (canonical)
 
-### A. Self-hosted GitHub Actions runner (recommended)
+The container runs APScheduler (`pipeline/scheduler/cron_runner.py`), refreshes
+the payload daily at 09:00 UTC, and pushes via the GitHub Contents API. No git
+push, no self-hosted runner, no per-tick GHA cost.
 
-`.github/workflows/refresh.yml` runs daily at 09:00 UTC on a runner tagged
-`luckin-internal`. The runner must be inside the network that can reach MySQL.
-Set `MYSQL_SECRET_NAME` as a repo secret.
-
-### B. Internal cron + mcp-db-gateway
-
-If you'd rather keep the runner out of CI:
-
-```
-# crontab on the internal jump host
-30 5 * * *   cd /opt/luckin-store-ops-dashboard && MYSQL_SECRET_NAME=… bash pipeline/refresh.sh
+```bash
+cd pipeline
+cp .env.example .env                 # fill in MYSQL_SECRET_NAME + GITHUB_TOKEN
+docker compose up -d --build
+docker compose logs -f pipeline      # watch the first run
 ```
 
-`refresh.sh` is `set -euo pipefail` and fails fast — empty payloads are never committed.
+The container is stateless: `data/payload.json` is regenerated on every tick
+and immediately PUT to the repo via REST. Vercel rebuilds on each commit.
 
-### C. Scheduled Claude Code agent
+### B. Manual `pipeline/refresh.sh` (ad-hoc / dev)
 
-The pipeline's collectors are idempotent. A scheduled `claude` job inside the
-internal network can run `python3 -m pipeline.frontend_formatter` directly.
-Useful for one-shot ad-hoc refreshes when neither A nor B is available.
+Same code path, but uses `git push` instead of the API and runs once. Useful
+for local testing or one-off backfills:
+
+```bash
+MYSQL_SECRET_NAME=… bash pipeline/refresh.sh
+```
+
+`refresh.sh` is `set -euo pipefail` — empty payloads are never committed.
+
+### C. GitHub Actions (manual fallback)
+
+`.github/workflows/refresh.yml` is left in place but `workflow_dispatch`-only —
+its scheduled trigger was removed because the self-hosted runner with MySQL
+VPC reach is not currently provisioned. Use it only after wiring a runner.
 
 ## Local development
 

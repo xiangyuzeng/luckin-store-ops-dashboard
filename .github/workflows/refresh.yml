@@ -1,18 +1,12 @@
 name: refresh-payload
 
-# Daily refresh of data/payload.json. Runs at 09:00 UTC (~05:00 ET, off-peak).
-# Also exposed as workflow_dispatch for manual reruns.
-#
-# Path A — self-hosted runner inside the internal network with MySQL access.
-# Path B — internal cron calling pipeline/refresh.sh against mcp-db-gateway (no GH Actions).
-# Path C — scheduled Claude Code agent committing the payload directly.
-#
-# If the runs-on tag below has no matching runner, the job is skipped — Vercel deploys
-# from the committed payload regardless of whether this workflow ever runs.
+# Manual-only fallback path. The canonical refresh runs in Docker on an
+# internal host (see pipeline/docker-compose.yml), driven by APScheduler
+# at 09:00 UTC. This workflow stays as workflow_dispatch only — its
+# scheduled trigger was disabled to avoid daily failures, since the
+# self-hosted runner with MySQL VPC reach is not currently provisioned.
 
 on:
-  schedule:
-    - cron: '0 9 * * *'
   workflow_dispatch:
 
 permissions:

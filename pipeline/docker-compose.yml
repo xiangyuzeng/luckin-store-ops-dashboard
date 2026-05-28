@@ -1,6 +1,12 @@
 # Run from the pipeline/ directory:
 #   docker compose up -d --build
 # .env must live next to this file (see .env.example).
+
+# Pinned project name so `docker compose up` here doesn't tear down
+# the sibling luckin-efficiency-pipeline container (both repos use a
+# `pipeline/` subdir, so Compose's default project name collides).
+name: luckin-store-ops-pipeline
+
 services:
   pipeline:
     build:

@@ -133,9 +133,6 @@ export function getMetricValue(rows: DailyStoreRow[], key: MetricKey): number | 
     // could synthesize from nulls. The UI shows "数据源待接入".
     if (key === 'hourlyCupAchieve') return aggregateRatio(rows, 'hourly_cup_achieve');
   }
-  if (def.source === 'partial' && key === 'materialLossRate') {
-    return aggregateRatio(rows, 'material_loss_rate');
-  }
   switch (key) {
     case 'orderCount':         return sumCount(rows, 'order_count');
     case 'productCount':       return sumCount(rows, 'product_count');
@@ -144,6 +141,7 @@ export function getMetricValue(rows: DailyStoreRow[], key: MetricKey): number | 
     case 'perfHourlyCups':     return aggregatePerfHourlyCups(rows);
     case 'qcPassRate':         return aggregateRatio(rows, 'qc_pass_rate');
     case 'qcAvgScore':         return aggregateRatio(rows, 'qc_avg_score');
+    case 'materialLossRate':   return aggregateRatio(rows, 'material_loss_rate');
     case 'pickupCount':        return sumCount(rows, 'pickup_count');
     case 'deliveryCount':      return sumCount(rows, 'delivery_count');
     case 'freshMadeCount':     return sumCount(rows, 'fresh_made_count');

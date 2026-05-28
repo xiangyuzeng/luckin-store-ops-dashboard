@@ -4,5 +4,7 @@
   "luckyus_scm_shopstock":    "aws-luckyus-scm-shopstock-rw",
   "luckyus_iluckyhealth":     "aws-luckyus-iluckyhealth-rw",
   "luckyus_opempefficiency":  "aws-luckyus-opempefficiency-rw",
-  "luckyus_opqualitycontrol": "aws-luckyus-opqualitycontrol-rw"
+  "luckyus_opqualitycontrol": "aws-luckyus-opqualitycontrol-rw",
+  "luckyus_scm_commodity":    "aws-luckyus-scmcommodity-rw",
+  "luckyus_scm_purchase":     "aws-luckyus-scm-purchase-rw"
 }

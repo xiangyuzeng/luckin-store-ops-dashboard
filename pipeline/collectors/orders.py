@@ -129,3 +129,33 @@ def fetch_spu_daily(retain_days: int = 90) -> list[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(sql, (TENANT, retain_days))
             return list(cur.fetchall())
+
+
+def fetch_spu_code_daily(retain_days: int = 90) -> list[dict[str, Any]]:
+    """Per (shop_id, ET-local date, spu_code) quantity — for BOM theoretical-cost join.
+
+    The TOP-N display path uses spu_name (human-readable); the materialLossRate
+    path needs spu_code (matches t_formula_average's join key). Kept as a
+    separate collector so the two consumers stay decoupled."""
+    sql = """
+        SELECT
+            o.shop_id,
+            DATE(CONVERT_TZ(o.pay_time, 'UTC', 'US/Eastern')) AS et_date,
+            i.spu_code,
+            SUM(i.sku_num)                                    AS qty
+          FROM luckyus_sales_order.t_order o
+          JOIN luckyus_sales_order.t_order_item i ON i.order_id = o.id
+         WHERE o.tenant = %s
+           AND o.status = 90
+           AND o.pay_time >= UTC_TIMESTAMP() - INTERVAL %s DAY
+           AND i.spu_code IS NOT NULL
+         GROUP BY o.shop_id, et_date, i.spu_code
+        HAVING qty > 0
+         ORDER BY o.shop_id, et_date
+         LIMIT 500000
+    """
+    assert_read_only(sql)
+    with connect("luckyus_sales_order") as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (TENANT, retain_days))
+            return list(cur.fetchall())

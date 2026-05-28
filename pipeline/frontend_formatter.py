@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .collectors.bom import fetch_bom_avg, fetch_goods_unit_costs
 from .collectors.efficiency import (
     fetch_half_hour_running_totals,
     fetch_half_hour_timing,
@@ -23,10 +24,11 @@ from .collectors.orders import (
     fetch_daily_store_fact,
     fetch_daily_timing,
     fetch_shop_id_to_shop_no_map,
+    fetch_spu_code_daily,
     fetch_spu_daily,
 )
 from .collectors.qc import fetch_daily_qc
-from .collectors.spoilage import fetch_daily_spoilage
+from .collectors.spoilage import fetch_daily_spoilage_by_spec
 from .collectors.stores import fetch_store_directory
 
 RETAIN_DAYS = int(os.environ.get("RETAIN_DAYS", "90"))
@@ -45,7 +47,7 @@ METRICS: list[dict[str, Any]] = [
     {"key": "hourlyCupAchieve",   "label_zh": "小时杯量达成比",    "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "(绩效小时杯量 / 理论小时杯量) × 100%"},
     {"key": "qcPassRate",         "label_zh": "品控稽核达标率",    "format": "percent",  "comparisons": ["sequential"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "SUM(t_shopcheck_report.score≥80) / COUNT(*)  （t_shopcheck_report, status∈{10,40}, 0<score≤100）"},
     {"key": "qcAvgScore",         "label_zh": "品控稽核平均分",    "format": "score",    "comparisons": ["sequential"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "SUM(t_shopcheck_report.score) / COUNT(*)"},
-    {"key": "materialLossRate",   "label_zh": "原料损耗率",        "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "down", "source": "partial",   "formula_zh": "(实际 − 理论消耗成本) / 理论消耗成本（BOM 理论值待接入）"},
+    {"key": "materialLossRate",   "label_zh": "原料损耗率",        "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "down", "source": "confirmed", "formula_zh": "SUM(过期销毁 qty × goods_unit_cost) / SUM(sold qty × SUM(BOM need_qty × goods_unit_cost))  — goods_unit_cost 跨规格按收货量加权"},
     {"key": "avgDailyProducts",   "label_zh": "单店日均商品数",    "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "t_order_store_fact 商品数 / 运营天数"},
     {"key": "avgDailyFreshMade",  "label_zh": "单店日均现制商品数","format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "self_quantity / 运营天数"},
     {"key": "avgDailyEquiv",      "label_zh": "单店日均等效商品数","format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "(现制 + 0.25 × 外购) / 运营天数"},
@@ -131,13 +133,34 @@ def main() -> None:
     halfhour_timing = fetch_half_hour_timing(HALF_HOUR_RETAIN_DAYS)
     print(f"  → {len(halfhour_timing)} rows")
 
-    print("[collect] spoilage…")
+    print("[collect] spoilage by spec…")
     try:
-        spoilage = fetch_daily_spoilage(RETAIN_DAYS)
+        spoilage_by_spec = fetch_daily_spoilage_by_spec(RETAIN_DAYS)
     except Exception as exc:  # noqa: BLE001
         print(f"  [warn] spoilage failed: {exc}")
-        spoilage = []
-    print(f"  → {len(spoilage)} rows")
+        spoilage_by_spec = []
+    print(f"  → {len(spoilage_by_spec)} rows")
+
+    print("[collect] SPU code daily sales…")
+    try:
+        spu_code_daily = fetch_spu_code_daily(RETAIN_DAYS)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [warn] spu_code_daily failed: {exc}")
+        spu_code_daily = []
+    print(f"  → {len(spu_code_daily)} rows")
+
+    print("[collect] BOM avg + goods unit costs…")
+    try:
+        bom_rows = fetch_bom_avg()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [warn] BOM failed: {exc}")
+        bom_rows = []
+    try:
+        goods_costs = fetch_goods_unit_costs()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [warn] goods costs failed: {exc}")
+        goods_costs = []
+    print(f"  → {len(bom_rows)} BOM rows, {len(goods_costs)} goods with cost")
 
     print("[collect] labor hours (attendance + KPI)…")
     try:
@@ -154,6 +177,35 @@ def main() -> None:
         print(f"  [warn] qc failed: {exc}")
         qc = []
     print(f"  → {len(qc)} rows")
+
+    # ── Build theoretical / loss cost lookups (cross-DB Python join) ─
+    #   goods_cost[material_mid]   = weighted-avg unit cost (USD)
+    #   spu_cost[spu_code]         = SUM over BOM ingredients of need_qty × goods_cost
+    #   theoretical_cost_by[shop,d]= SUM over sold SPUs of sold_qty × spu_cost
+    #   loss_cost_by[shop,d]       = SUM over spoiled specs of spoiled_qty × goods_cost
+    # Materials missing from goods_cost contribute 0 (best-effort).
+    goods_cost: dict[str, float] = {
+        str(r["goods_mid"]): _to_float(r["unit_cost"]) for r in goods_costs
+    }
+    spu_cost: dict[str, float] = {}
+    for r in bom_rows:
+        spu = str(r["spu_code"])
+        unit_cost = goods_cost.get(str(r["material_mid"]), 0.0)
+        spu_cost[spu] = spu_cost.get(spu, 0.0) + _to_float(r["need_qty"]) * unit_cost
+
+    theoretical_by: dict[tuple[int, str], float] = {}
+    for r in spu_code_daily:
+        key = (int(r["shop_id"]), str(r["et_date"]))
+        cost = spu_cost.get(str(r["spu_code"]), 0.0)
+        theoretical_by[key] = theoretical_by.get(key, 0.0) + _to_float(r["qty"]) * cost
+
+    loss_by: dict[tuple[int, str], float] = {}
+    for r in spoilage_by_spec:
+        key = (int(r["shop_id"]), str(r["et_date"]))
+        spec_mid = str(r["spec_mid"])
+        goods_mid = spec_mid.split("-", 1)[0]
+        cost = goods_cost.get(goods_mid, 0.0)
+        loss_by[key] = loss_by.get(key, 0.0) + _to_float(r["spoiled_qty"]) * cost
 
     # ── Build daily store rows ──────────────────────────────────────
     timing_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in daily_timing}
@@ -216,6 +268,16 @@ def main() -> None:
                 qc_pass_pair = None
                 qc_score_pair = None
 
+            # Loss rate is best-effort: when goods_cost is missing for every
+            # spoiled spec on a day, `loss` ends up 0 and we'd misreport "0%
+            # loss" instead of "unknown". Require both sides > 0 to publish.
+            theoretical = theoretical_by.get((shop_id, d), 0.0)
+            loss = loss_by.get((shop_id, d), 0.0)
+            if theoretical > 0 and loss > 0:
+                loss_pair = {"num": round(loss, 2), "den": round(theoretical, 2)}
+            else:
+                loss_pair = None
+
             daily_rows.append({
                 "shop_no": shop_no, "date": d, "operating": True,
                 "order_count": orders,
@@ -232,7 +294,7 @@ def main() -> None:
                 "qc_pass_rate": qc_pass_pair,
                 "qc_avg_score": qc_score_pair,
                 "hourly_cup_achieve": None,
-                "material_loss_rate": None,
+                "material_loss_rate": loss_pair,
                 "labor_hours_total": labor_total,
                 "labor_hours_productive": labor_productive,
                 "accept_response_duration": (

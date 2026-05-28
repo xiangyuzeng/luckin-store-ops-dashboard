@@ -122,6 +122,8 @@ _DB_HOST_ENV_KEYS: dict[str, str] = {
     "luckyus_iluckyhealth":     "ILUCKYHEALTH_HOST",
     "luckyus_opempefficiency":  "OPEMPEFFICIENCY_HOST",
     "luckyus_opqualitycontrol": "OPQUALITYCONTROL_HOST",
+    "luckyus_scm_commodity":    "SCM_COMMODITY_HOST",
+    "luckyus_scm_purchase":     "SCM_PURCHASE_HOST",
 }
 
 _db_to_instance_cache: dict[str, str] | None = None

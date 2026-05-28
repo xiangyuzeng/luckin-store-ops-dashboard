@@ -12,7 +12,7 @@ export const METRICS: MetricDefinition[] = [
   { key: 'hourlyCupAchieve',   label_zh: '小时杯量达成比',     format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'pending',   formula_zh: '(绩效小时杯量 / 理论小时杯量) × 100%' },
   { key: 'qcPassRate',         label_zh: '品控稽核达标率',     format: 'percent',  comparisons: ['sequential'],   good_direction: 'up',   source: 'confirmed', formula_zh: 'SUM(t_shopcheck_report.score≥80) / COUNT(*)' },
   { key: 'qcAvgScore',         label_zh: '品控稽核平均分',     format: 'score',    comparisons: ['sequential'],   good_direction: 'up',   source: 'confirmed', formula_zh: 'SUM(t_shopcheck_report.score) / COUNT(*)' },
-  { key: 'materialLossRate',   label_zh: '原料损耗率',         format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'down', source: 'partial',   formula_zh: '(实际 − 理论消耗成本) / 理论消耗成本' },
+  { key: 'materialLossRate',   label_zh: '原料损耗率',         format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'down', source: 'confirmed', formula_zh: 'SUM(过期销毁qty × goods_unit_cost) / SUM(sold qty × BOM 理论物料成本)' },
   { key: 'avgDailyProducts',   label_zh: '单店日均商品数',     format: 'count',    comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: 't_order_store_fact 商品数 / 运营天数' },
   { key: 'avgDailyFreshMade',  label_zh: '单店日均现制商品数', format: 'count',    comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: 't_order_item 现制类目计数 / 运营天数' },
   { key: 'avgDailyEquiv',      label_zh: '单店日均等效商品数', format: 'count',    comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: '(现制 + 0.25 × 外购) / 运营天数' },

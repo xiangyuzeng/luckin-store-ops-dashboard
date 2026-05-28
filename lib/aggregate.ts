@@ -128,17 +128,15 @@ export function aggregateAvgDaily(
 export function getMetricValue(rows: DailyStoreRow[], key: MetricKey): number | null {
   const def = METRIC_BY_KEY[key];
   if (!def) return null;
-  if (def.source === 'pending') {
-    // Pending metrics intentionally have no source mapped — return null even if we
-    // could synthesize from nulls. The UI shows "数据源待接入".
-    if (key === 'hourlyCupAchieve') return aggregateRatio(rows, 'hourly_cup_achieve');
-  }
+  // No 'pending' metrics remain — every key now has a real source.
+  // Keeping the branch as a no-op so future pending fields slot in cleanly.
   switch (key) {
     case 'orderCount':         return sumCount(rows, 'order_count');
     case 'productCount':       return sumCount(rows, 'product_count');
     case 'satisfaction':       return aggregateRatio(rows, 'satisfaction');
     case 'hourlyCups':         return aggregateHourlyCups(rows);
     case 'perfHourlyCups':     return aggregatePerfHourlyCups(rows);
+    case 'hourlyCupAchieve':   return aggregateRatio(rows, 'hourly_cup_achieve');
     case 'qcPassRate':         return aggregateRatio(rows, 'qc_pass_rate');
     case 'qcAvgScore':         return aggregateRatio(rows, 'qc_avg_score');
     case 'materialLossRate':   return aggregateRatio(rows, 'material_loss_rate');

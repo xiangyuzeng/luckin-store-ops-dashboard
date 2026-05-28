@@ -9,7 +9,7 @@ export const METRICS: MetricDefinition[] = [
   { key: 'satisfaction',       label_zh: '满意度',             format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: '1 − (自取不满意 + 外送不满意) / 订单总数' },
   { key: 'hourlyCups',         label_zh: '小时杯量',           format: 'count',    comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: '等效商品数 / SUM(t_emp_kpi.attendance_hours)' },
   { key: 'perfHourlyCups',     label_zh: '绩效小时杯量',       format: 'count',    comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: '等效商品数 / SUM(t_emp_kpi.kpi_hours)  // kpi_hours 已排除会议/培训/帮带训/休息' },
-  { key: 'hourlyCupAchieve',   label_zh: '小时杯量达成比',     format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'pending',   formula_zh: '(绩效小时杯量 / 理论小时杯量) × 100%' },
+  { key: 'hourlyCupAchieve',   label_zh: '小时杯量达成比',     format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: '绩效小时杯量 / 理论小时杯量 (env: THEORETICAL_HOURLY_CUPS, default 30)' },
   { key: 'qcPassRate',         label_zh: '品控稽核达标率',     format: 'percent',  comparisons: ['sequential'],   good_direction: 'up',   source: 'confirmed', formula_zh: 'SUM(t_shopcheck_report.score≥80) / COUNT(*)' },
   { key: 'qcAvgScore',         label_zh: '品控稽核平均分',     format: 'score',    comparisons: ['sequential'],   good_direction: 'up',   source: 'confirmed', formula_zh: 'SUM(t_shopcheck_report.score) / COUNT(*)' },
   { key: 'materialLossRate',   label_zh: '原料损耗率',         format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'down', source: 'confirmed', formula_zh: 'SUM(过期销毁qty × goods_unit_cost) / SUM(sold qty × BOM 理论物料成本)' },

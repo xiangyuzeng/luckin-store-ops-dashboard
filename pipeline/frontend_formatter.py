@@ -30,6 +30,7 @@ from .collectors.orders import (
 from .collectors.qc import fetch_daily_qc
 from .collectors.spoilage import fetch_daily_spoilage_by_spec
 from .collectors.stores import fetch_store_directory
+from .config.settings import THEORETICAL_HOURLY_CUPS
 
 RETAIN_DAYS = int(os.environ.get("RETAIN_DAYS", "90"))
 HALF_HOUR_RETAIN_DAYS = int(os.environ.get("HALF_HOUR_RETAIN_DAYS", "3"))
@@ -44,7 +45,7 @@ METRICS: list[dict[str, Any]] = [
     {"key": "satisfaction",       "label_zh": "满意度",            "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "1 − (自取不满意 + 外送不满意) / 订单总数"},
     {"key": "hourlyCups",         "label_zh": "小时杯量",          "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "等效商品数 / SUM(t_emp_kpi.attendance_hours)"},
     {"key": "perfHourlyCups",     "label_zh": "绩效小时杯量",      "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "等效商品数 / SUM(t_emp_kpi.kpi_hours) — kpi_hours 已排除会议/培训/帮带训/休息"},
-    {"key": "hourlyCupAchieve",   "label_zh": "小时杯量达成比",    "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "(绩效小时杯量 / 理论小时杯量) × 100%"},
+    {"key": "hourlyCupAchieve",   "label_zh": "小时杯量达成比",    "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "绩效小时杯量 / THEORETICAL_HOURLY_CUPS (env, 默认 30 杯/h)"},
     {"key": "qcPassRate",         "label_zh": "品控稽核达标率",    "format": "percent",  "comparisons": ["sequential"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "SUM(t_shopcheck_report.score≥80) / COUNT(*)  （t_shopcheck_report, status∈{10,40}, 0<score≤100）"},
     {"key": "qcAvgScore",         "label_zh": "品控稽核平均分",    "format": "score",    "comparisons": ["sequential"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "SUM(t_shopcheck_report.score) / COUNT(*)"},
     {"key": "materialLossRate",   "label_zh": "原料损耗率",        "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "down", "source": "confirmed", "formula_zh": "SUM(过期销毁 qty × goods_unit_cost) / SUM(sold qty × SUM(BOM need_qty × goods_unit_cost))  — goods_unit_cost 跨规格按收货量加权"},
@@ -259,6 +260,18 @@ def main() -> None:
             labor_total = round(_to_float(l["labor_hours_total"]), 2) if l else None
             labor_productive = round(_to_float(l["labor_hours_productive"]), 2) if l else None
 
+            # hourly_cup_achieve aggregates correctly via aggregateRatio:
+            #   SUM(equiv) / (THEORETICAL × SUM(labor_productive))
+            #   = (SUM(equiv) / SUM(labor_productive)) / THEORETICAL
+            #   = perfHourlyCups / THEORETICAL
+            if labor_productive and labor_productive > 0 and equiv > 0:
+                achieve_pair = {
+                    "num": equiv,
+                    "den": round(labor_productive * THEORETICAL_HOURLY_CUPS, 2),
+                }
+            else:
+                achieve_pair = None
+
             q = qc_by.get((shop_id, d))
             if q and _to_int(q["report_count"]) > 0:
                 report_count = _to_int(q["report_count"])
@@ -293,7 +306,7 @@ def main() -> None:
                 "satisfaction": {"num": orders - unsat, "den": orders},
                 "qc_pass_rate": qc_pass_pair,
                 "qc_avg_score": qc_score_pair,
-                "hourly_cup_achieve": None,
+                "hourly_cup_achieve": achieve_pair,
                 "material_loss_rate": loss_pair,
                 "labor_hours_total": labor_total,
                 "labor_hours_productive": labor_productive,
@@ -403,6 +416,7 @@ def main() -> None:
             "retained_to": dates[-1],
             "schema_version": 1,
             "source_status": {m["key"]: m["source"] for m in METRICS},
+            "theoretical_hourly_cups": THEORETICAL_HOURLY_CUPS,
         },
         "stores": stores,
         "metrics": METRICS,

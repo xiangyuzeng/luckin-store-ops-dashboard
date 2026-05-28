@@ -48,6 +48,13 @@ DAILY_TIMEZONE = os.environ.get("DAILY_TIMEZONE", "US/Eastern")
 DAILY_HOUR = int(os.environ.get("DAILY_HOUR", "1"))
 DAILY_MINUTE = int(os.environ.get("DAILY_MINUTE", "0"))
 
+# ── hourlyCupAchieve target ─────────────────────────────────────────
+# Theoretical equivalent-cups-per-hour benchmark used as the denominator
+# for hourlyCupAchieve = perfHourlyCups / THEORETICAL_HOURLY_CUPS.
+# 30 杯/小时 is the initial placeholder — China HQ may publish a
+# different number per shop tier; revisit once we have that input.
+THEORETICAL_HOURLY_CUPS = float(os.environ.get("THEORETICAL_HOURLY_CUPS", "30"))
+
 
 @dataclass(frozen=True)
 class DbCredentials:

@@ -18,6 +18,7 @@ from .collectors.efficiency import (
     fetch_half_hour_running_totals,
     fetch_half_hour_timing,
 )
+from .collectors.labor import fetch_daily_labor_hours
 from .collectors.orders import (
     fetch_daily_store_fact,
     fetch_daily_timing,
@@ -38,8 +39,8 @@ METRICS: list[dict[str, Any]] = [
     {"key": "orderCount",         "label_zh": "订单数量",          "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "已完成订单数 (t_order.status=90)"},
     {"key": "productCount",       "label_zh": "商品数量",          "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "self_quantity + purchase_quantity 每店每日"},
     {"key": "satisfaction",       "label_zh": "满意度",            "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "1 − (自取不满意 + 外送不满意) / 订单总数"},
-    {"key": "hourlyCups",         "label_zh": "小时杯量",          "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "等效商品数 / 总工时（考勤源待接入）"},
-    {"key": "perfHourlyCups",     "label_zh": "绩效小时杯量",      "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "等效商品数 / (考勤工时 − 会议 − 培训 − 帮带训)"},
+    {"key": "hourlyCups",         "label_zh": "小时杯量",          "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "等效商品数 / SUM(t_emp_kpi.attendance_hours)"},
+    {"key": "perfHourlyCups",     "label_zh": "绩效小时杯量",      "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "等效商品数 / SUM(t_emp_kpi.kpi_hours) — kpi_hours 已排除会议/培训/帮带训/休息"},
     {"key": "hourlyCupAchieve",   "label_zh": "小时杯量达成比",    "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "(绩效小时杯量 / 理论小时杯量) × 100%"},
     {"key": "qcPassRate",         "label_zh": "品控稽核达标率",    "format": "percent",  "comparisons": ["sequential"],   "good_direction": "up",   "source": "pending",   "formula_zh": "≥80分稽核任务数 / 稽核任务数（QC源待接入）"},
     {"key": "qcAvgScore",         "label_zh": "品控稽核平均分",    "format": "score",    "comparisons": ["sequential"],   "good_direction": "up",   "source": "pending",   "formula_zh": "稽核总分 / 稽核任务数"},
@@ -137,9 +138,18 @@ def main() -> None:
         spoilage = []
     print(f"  → {len(spoilage)} rows")
 
+    print("[collect] labor hours (attendance + KPI)…")
+    try:
+        labor = fetch_daily_labor_hours(RETAIN_DAYS)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [warn] labor failed: {exc}")
+        labor = []
+    print(f"  → {len(labor)} rows")
+
     # ── Build daily store rows ──────────────────────────────────────
     timing_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in daily_timing}
     facts_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in daily_facts}
+    labor_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in labor}
     dates = sorted({str(r["et_date"]) for r in daily_facts})
     if not dates:
         # No real data — bail rather than ship an empty payload.
@@ -183,6 +193,10 @@ def main() -> None:
                 accept_total = make_total = 0.0
                 accept_weight = make_weight = 0
 
+            l = labor_by.get((shop_id, d))
+            labor_total = round(_to_float(l["labor_hours_total"]), 2) if l else None
+            labor_productive = round(_to_float(l["labor_hours_productive"]), 2) if l else None
+
             daily_rows.append({
                 "shop_no": shop_no, "date": d, "operating": True,
                 "order_count": orders,
@@ -200,8 +214,8 @@ def main() -> None:
                 "qc_avg_score": None,
                 "hourly_cup_achieve": None,
                 "material_loss_rate": None,
-                "labor_hours_total": None,
-                "labor_hours_productive": None,
+                "labor_hours_total": labor_total,
+                "labor_hours_productive": labor_productive,
                 "accept_response_duration": (
                     {"total_seconds": round(accept_total, 2), "weight": accept_weight}
                     if accept_weight > 0 else None

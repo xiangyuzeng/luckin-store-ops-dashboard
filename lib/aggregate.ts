@@ -131,8 +131,6 @@ export function getMetricValue(rows: DailyStoreRow[], key: MetricKey): number | 
   if (def.source === 'pending') {
     // Pending metrics intentionally have no source mapped — return null even if we
     // could synthesize from nulls. The UI shows "数据源待接入".
-    if (key === 'hourlyCups') return aggregateHourlyCups(rows);
-    if (key === 'perfHourlyCups') return aggregatePerfHourlyCups(rows);
     if (key === 'hourlyCupAchieve') return aggregateRatio(rows, 'hourly_cup_achieve');
     if (key === 'qcPassRate') return aggregateRatio(rows, 'qc_pass_rate');
     if (key === 'qcAvgScore') return aggregateRatio(rows, 'qc_avg_score');
@@ -144,6 +142,8 @@ export function getMetricValue(rows: DailyStoreRow[], key: MetricKey): number | 
     case 'orderCount':         return sumCount(rows, 'order_count');
     case 'productCount':       return sumCount(rows, 'product_count');
     case 'satisfaction':       return aggregateRatio(rows, 'satisfaction');
+    case 'hourlyCups':         return aggregateHourlyCups(rows);
+    case 'perfHourlyCups':     return aggregatePerfHourlyCups(rows);
     case 'pickupCount':        return sumCount(rows, 'pickup_count');
     case 'deliveryCount':      return sumCount(rows, 'delivery_count');
     case 'freshMadeCount':     return sumCount(rows, 'fresh_made_count');

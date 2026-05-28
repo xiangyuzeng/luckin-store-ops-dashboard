@@ -116,10 +116,11 @@ def load_credentials() -> DbCredentials:
 # instance mapping) is decoupled from the resolver logic.
 _RDS_INSTANCES_FILE = Path(__file__).resolve().parent / "rds_instances.json"
 _DB_HOST_ENV_KEYS: dict[str, str] = {
-    "luckyus_opshop":        "OPSHOP_HOST",
-    "luckyus_sales_order":   "SALESORDER_HOST",
-    "luckyus_scm_shopstock": "SCM_SHOPSTOCK_HOST",
-    "luckyus_iluckyhealth":  "ILUCKYHEALTH_HOST",
+    "luckyus_opshop":          "OPSHOP_HOST",
+    "luckyus_sales_order":     "SALESORDER_HOST",
+    "luckyus_scm_shopstock":   "SCM_SHOPSTOCK_HOST",
+    "luckyus_iluckyhealth":    "ILUCKYHEALTH_HOST",
+    "luckyus_opempefficiency": "OPEMPEFFICIENCY_HOST",
 }
 
 _db_to_instance_cache: dict[str, str] | None = None

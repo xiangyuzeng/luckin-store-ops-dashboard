@@ -6,7 +6,7 @@ import type { MetricDefinition, MetricKey } from '@/lib/types';
 export const METRICS: MetricDefinition[] = [
   { key: 'orderCount',         label_zh: '订单数量',           format: 'count',    comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: '已完成订单数 (t_order.status=已完成)' },
   { key: 'productCount',       label_zh: '商品数量',           format: 'count',    comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: '已完成订单的商品数 (t_order_item ⋈ t_order)' },
-  { key: 'satisfaction',       label_zh: '满意度',             format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'pending',   formula_zh: '1 − 不满意订单数 / 订单数' },
+  { key: 'satisfaction',       label_zh: '满意度',             format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'confirmed', formula_zh: '1 − (自取不满意 + 外送不满意) / 订单总数' },
   { key: 'hourlyCups',         label_zh: '小时杯量',           format: 'count',    comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'pending',   formula_zh: '等效商品数 / 总工时' },
   { key: 'perfHourlyCups',     label_zh: '绩效小时杯量',       format: 'count',    comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'pending',   formula_zh: '等效商品数 / (考勤工时 − 会议 − 培训 − 帮带训)' },
   { key: 'hourlyCupAchieve',   label_zh: '小时杯量达成比',     format: 'percent',  comparisons: ['wow', 'mom'],   good_direction: 'up',   source: 'pending',   formula_zh: '(绩效小时杯量 / 理论小时杯量) × 100%' },

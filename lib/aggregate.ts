@@ -136,7 +136,6 @@ export function getMetricValue(rows: DailyStoreRow[], key: MetricKey): number | 
     if (key === 'hourlyCupAchieve') return aggregateRatio(rows, 'hourly_cup_achieve');
     if (key === 'qcPassRate') return aggregateRatio(rows, 'qc_pass_rate');
     if (key === 'qcAvgScore') return aggregateRatio(rows, 'qc_avg_score');
-    if (key === 'satisfaction') return aggregateRatio(rows, 'satisfaction');
   }
   if (def.source === 'partial' && key === 'materialLossRate') {
     return aggregateRatio(rows, 'material_loss_rate');
@@ -144,6 +143,7 @@ export function getMetricValue(rows: DailyStoreRow[], key: MetricKey): number | 
   switch (key) {
     case 'orderCount':         return sumCount(rows, 'order_count');
     case 'productCount':       return sumCount(rows, 'product_count');
+    case 'satisfaction':       return aggregateRatio(rows, 'satisfaction');
     case 'pickupCount':        return sumCount(rows, 'pickup_count');
     case 'deliveryCount':      return sumCount(rows, 'delivery_count');
     case 'freshMadeCount':     return sumCount(rows, 'fresh_made_count');

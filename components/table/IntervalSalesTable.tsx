@@ -15,9 +15,11 @@ interface Props {
 type SortKey = 'slot' | 'delivery' | 'pickup' | 'freshMade' | 'purchased';
 type SortDir = 'asc' | 'desc';
 
+// ET operating hours 06:00–21:30 (32 half-hour slots). Slots outside this
+// window were almost always empty in NA and added noise.
 const ALL_SLOTS: string[] = (() => {
   const out: string[] = [];
-  for (let h = 0; h < 24; h += 1) {
+  for (let h = 6; h <= 21; h += 1) {
     for (const m of [0, 30]) {
       out.push(`${String(h).padStart(2, '0')}:${m === 0 ? '00' : '30'}`);
     }

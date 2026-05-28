@@ -6,6 +6,7 @@
 
 import { useMemo, useState } from 'react';
 import { FilterBar } from '@/components/layout/FilterBar';
+import { DebugOverlay } from '@/components/debug/DebugOverlay';
 import { KpiCard } from '@/components/kpi/KpiCard';
 import { KpiGroup } from '@/components/kpi/KpiGroup';
 import { StoreKpiTable } from '@/components/table/StoreKpiTable';
@@ -26,6 +27,7 @@ import {
 import { computeComparison } from '@/lib/compare';
 import { normalize } from '@/lib/filters';
 import { useUrlFilters } from '@/lib/use-url-filters';
+import { emptyReasonFor } from '@/lib/freshness';
 import { labels } from '@/lib/labels';
 import type { Payload } from '@/lib/types';
 import styles from './home.module.css';
@@ -38,6 +40,7 @@ export function HomeBoard({ payload }: Props) {
   const [filters, setFilters] = useUrlFilters(payload);
   const normalized = useMemo(() => normalize(filters, payload), [filters, payload]);
   const [selectedShop, setSelectedShop] = useState<string | null>(null);
+  const debugEnabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
 
   // shopNos for aggregation: drill-down (row click) overrides the filter dropdown.
   const aggShopNos = useMemo(
@@ -112,7 +115,10 @@ export function HomeBoard({ payload }: Props) {
                 );
                 return { kind, delta: c.delta };
               });
-              return <KpiCard key={k} metric={metric} value={value} comparisons={comparisons} />;
+              const emptyReason = value === null
+                ? emptyReasonFor(k, normalized.from, normalized.to, payload.meta.retained_to)
+                : undefined;
+              return <KpiCard key={k} metric={metric} value={value} comparisons={comparisons} emptyReason={emptyReason} />;
             })}
           </KpiGroup>
         ))}
@@ -152,6 +158,16 @@ export function HomeBoard({ payload }: Props) {
       </div>
 
       <IntervalSalesTable rows={intervalSales} from={normalized.from} to={normalized.to} />
+
+      {debugEnabled && (
+        <DebugOverlay
+          payload={payload}
+          filtered={rangeRows}
+          from={normalized.from}
+          to={normalized.to}
+          shopNos={normalized.shopNos}
+        />
+      )}
     </main>
   );
 }

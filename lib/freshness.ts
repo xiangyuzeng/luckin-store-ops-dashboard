@@ -27,3 +27,29 @@ export function formatAge(mins: number): string {
   const days = Math.floor(hrs / 24);
   return `${days} 天前`;
 }
+
+// Metrics whose upstream source is T+1 (labor + QC). When the selected window
+// includes today, the empty-value reason is "today not yet settled" rather than
+// a generic "no data".
+const T_PLUS_1_METRIC_KEYS = new Set([
+  'hourlyCups',
+  'perfHourlyCups',
+  'hourlyCupAchieve',
+  'qcPassRate',
+  'qcAvgScore',
+]);
+
+export function emptyReasonFor(
+  metricKey: string,
+  from: ISO8601,
+  to: ISO8601,
+  retainedTo: ISO8601,
+): string {
+  if (T_PLUS_1_METRIC_KEYS.has(metricKey) && to >= retainedTo) {
+    return from === to ? '今日尚未结算' : '今日尚未结算，可前移区间';
+  }
+  if (metricKey === 'qcPassRate' || metricKey === 'qcAvgScore') {
+    return '本周期无稽核记录';
+  }
+  return '本周期无数据';
+}

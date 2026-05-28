@@ -1,0 +1,116 @@
+.overlay {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  bottom: 16px;
+  width: 540px;
+  max-width: 95vw;
+  background: rgba(15, 23, 42, 0.96);
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  z-index: 9999;
+  overflow: auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.header strong {
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.meta {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.section {
+  margin-bottom: 10px;
+}
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+}
+
+.kv span:first-child {
+  color: #94a3b8;
+}
+
+.kv span:last-child {
+  color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 500;
+  color: #94a3b8;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  vertical-align: top;
+}
+
+.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sub {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.rowNull td {
+  color: #cbd5f5;
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.pill {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  text-transform: lowercase;
+}
+
+.pill_confirmed {
+  background: rgba(20, 184, 166, 0.18);
+  color: #5eead4;
+}
+
+.pill_pending {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fcd34d;
+}
+
+.pill_partial {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+}

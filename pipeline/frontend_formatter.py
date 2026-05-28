@@ -103,8 +103,25 @@ def _non_op(shop_no: str, d: str) -> dict[str, Any]:
     }
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# Collectors → set of metric keys they populate. Used to surface per-metric
+# "last collector run" timestamps in the ?debug=1 overlay.
+COLLECTOR_TO_METRICS: dict[str, list[str]] = {
+    "orders": ["orderCount", "productCount", "satisfaction", "pickupCount", "deliveryCount", "freshMadeCount",
+               "avgDailyProducts", "avgDailyFreshMade", "avgDailyEquiv"],
+    "efficiency": ["efficiencyDuration"],
+    "labor": ["hourlyCups", "perfHourlyCups", "hourlyCupAchieve"],
+    "qc": ["qcPassRate", "qcAvgScore"],
+    "spoilage_bom": ["materialLossRate"],
+}
+
+
 def main() -> None:
     print(f"[refresh] tenant={TENANT} retain_days={RETAIN_DAYS} half_hour_days={HALF_HOUR_RETAIN_DAYS}")
+    collector_run_ts: dict[str, str] = {}
 
     print("[collect] store directory…")
     master = fetch_store_directory()
@@ -116,10 +133,12 @@ def main() -> None:
 
     print("[collect] daily store-fact aggregates…")
     daily_facts = fetch_daily_store_fact(RETAIN_DAYS)
+    collector_run_ts["orders"] = _now_iso()
     print(f"  → {len(daily_facts)} (shop_id, et_date) rows")
 
     print("[collect] daily timing (accept/make)…")
     daily_timing = fetch_daily_timing(RETAIN_DAYS)
+    collector_run_ts["efficiency"] = _now_iso()
     print(f"  → {len(daily_timing)} rows")
 
     print("[collect] SPU daily…")
@@ -137,6 +156,7 @@ def main() -> None:
     print("[collect] spoilage by spec…")
     try:
         spoilage_by_spec = fetch_daily_spoilage_by_spec(RETAIN_DAYS)
+        collector_run_ts["spoilage_bom"] = _now_iso()
     except Exception as exc:  # noqa: BLE001
         print(f"  [warn] spoilage failed: {exc}")
         spoilage_by_spec = []
@@ -166,6 +186,7 @@ def main() -> None:
     print("[collect] labor hours (attendance + KPI)…")
     try:
         labor = fetch_daily_labor_hours(RETAIN_DAYS)
+        collector_run_ts["labor"] = _now_iso()
     except Exception as exc:  # noqa: BLE001
         print(f"  [warn] labor failed: {exc}")
         labor = []
@@ -174,6 +195,7 @@ def main() -> None:
     print("[collect] QC shop-check reports…")
     try:
         qc = fetch_daily_qc(RETAIN_DAYS)
+        collector_run_ts["qc"] = _now_iso()
     except Exception as exc:  # noqa: BLE001
         print(f"  [warn] qc failed: {exc}")
         qc = []
@@ -416,6 +438,12 @@ def main() -> None:
             "retained_to": dates[-1],
             "schema_version": 1,
             "source_status": {m["key"]: m["source"] for m in METRICS},
+            "collector_timestamps": {
+                metric_key: collector_run_ts[collector]
+                for collector, metric_keys in COLLECTOR_TO_METRICS.items()
+                if collector in collector_run_ts
+                for metric_key in metric_keys
+            },
             "theoretical_hourly_cups": THEORETICAL_HOURLY_CUPS,
         },
         "stores": stores,

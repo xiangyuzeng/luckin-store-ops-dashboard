@@ -140,6 +140,9 @@ export interface PayloadMeta {
   retained_to: ISODate;
   schema_version: number;
   source_status: Partial<Record<MetricKey, DataSource>>;
+  // Optional — per-collector last-run timestamps. Surfaces in the ?debug=1 overlay.
+  collector_timestamps?: Partial<Record<string, ISO8601>>;
+  theoretical_hourly_cups?: number;
 }
 
 export interface Payload {

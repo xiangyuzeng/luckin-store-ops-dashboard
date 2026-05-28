@@ -19,11 +19,21 @@ export interface NormalizedFilters extends FilterState {
   warnings: string[]; // user-facing notes (e.g. range clamped)
 }
 
+// Default to the last 7 days, not just today. Labor (`t_emp_kpi`) and QC
+// (`t_shopcheck_report`) are T+1 sources — a today-only default lands on a window
+// where they are guaranteed empty, which previously rendered as "数据源待接入".
+export const DEFAULT_RANGE_DAYS = 7;
+
 export function defaultFilters(payload: Payload): FilterState {
-  const today = payload.meta.retained_to;
+  const to = payload.meta.retained_to;
+  const toDate = new Date(`${to}T00:00:00Z`);
+  toDate.setUTCDate(toDate.getUTCDate() - (DEFAULT_RANGE_DAYS - 1));
+  const from = toDate.toISOString().slice(0, 10);
+  // Clamp to retention window in case the payload hasn't accumulated 7 days yet.
+  const clampedFrom = from < payload.meta.retained_from ? payload.meta.retained_from : from;
   return {
-    from: today,
-    to: today,
+    from: clampedFrom,
+    to,
     city: ALL,
     region: ALL,
     shop: ALL,

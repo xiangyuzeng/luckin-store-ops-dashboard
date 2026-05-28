@@ -23,8 +23,12 @@ const DELTA_FORMATTER = new Intl.NumberFormat('en-US', {
 export const PENDING_DISPLAY = '数据源待接入';
 export const EMPTY_DISPLAY = '—';
 
+// Null = "no data in this window" (use EMPTY_DISPLAY). Use PENDING_DISPLAY only at
+// the card level when metric.source === 'pending' — i.e. the source isn't wired yet.
+// Returning PENDING_DISPLAY here misleads viewers into thinking the source is missing
+// when in reality the aggregation just had zero rows.
 export function formatMetricValue(value: number | null, format: MetricFormat): string {
-  if (value === null || Number.isNaN(value)) return PENDING_DISPLAY;
+  if (value === null || Number.isNaN(value)) return EMPTY_DISPLAY;
   switch (format) {
     case 'percent':
       return `${PERCENT_FORMATTER.format(value * 100)}%`;

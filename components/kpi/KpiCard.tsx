@@ -14,12 +14,14 @@ interface Props {
   metric: MetricDefinition;
   value: number | null;
   comparisons: ComparisonInput[];
+  emptyReason?: string;
 }
 
-export function KpiCard({ metric, value, comparisons }: Props) {
+export function KpiCard({ metric, value, comparisons, emptyReason }: Props) {
   const isPending = metric.source === 'pending';
-  const display = isPending && value === null ? PENDING_DISPLAY : formatMetricValue(value, metric.format);
   const pending = isPending && value === null;
+  const empty = !pending && value === null;
+  const display = pending ? PENDING_DISPLAY : formatMetricValue(value, metric.format);
 
   return (
     <article className={`${styles.card} ${pending ? styles.pending : ''}`}>
@@ -33,6 +35,8 @@ export function KpiCard({ metric, value, comparisons }: Props) {
       <div className={pending ? styles.valuePending : styles.value} title={pending ? labels.pending : undefined}>
         {display}
       </div>
+
+      {empty && emptyReason && <div className={styles.emptyReason}>{emptyReason}</div>}
 
       <div className={styles.badges}>
         {comparisons.map((c) => (

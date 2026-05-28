@@ -1,7 +1,8 @@
 {
-  "luckyus_opshop":          "aws-luckyus-opshop-rw",
-  "luckyus_sales_order":     "aws-luckyus-salesorder-rw",
-  "luckyus_scm_shopstock":   "aws-luckyus-scm-shopstock-rw",
-  "luckyus_iluckyhealth":    "aws-luckyus-iluckyhealth-rw",
-  "luckyus_opempefficiency": "aws-luckyus-opempefficiency-rw"
+  "luckyus_opshop":           "aws-luckyus-opshop-rw",
+  "luckyus_sales_order":      "aws-luckyus-salesorder-rw",
+  "luckyus_scm_shopstock":    "aws-luckyus-scm-shopstock-rw",
+  "luckyus_iluckyhealth":     "aws-luckyus-iluckyhealth-rw",
+  "luckyus_opempefficiency":  "aws-luckyus-opempefficiency-rw",
+  "luckyus_opqualitycontrol": "aws-luckyus-opqualitycontrol-rw"
 }

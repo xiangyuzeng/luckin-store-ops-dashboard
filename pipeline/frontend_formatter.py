@@ -25,6 +25,7 @@ from .collectors.orders import (
     fetch_shop_id_to_shop_no_map,
     fetch_spu_daily,
 )
+from .collectors.qc import fetch_daily_qc
 from .collectors.spoilage import fetch_daily_spoilage
 from .collectors.stores import fetch_store_directory
 
@@ -42,8 +43,8 @@ METRICS: list[dict[str, Any]] = [
     {"key": "hourlyCups",         "label_zh": "小时杯量",          "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "等效商品数 / SUM(t_emp_kpi.attendance_hours)"},
     {"key": "perfHourlyCups",     "label_zh": "绩效小时杯量",      "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "等效商品数 / SUM(t_emp_kpi.kpi_hours) — kpi_hours 已排除会议/培训/帮带训/休息"},
     {"key": "hourlyCupAchieve",   "label_zh": "小时杯量达成比",    "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "pending",   "formula_zh": "(绩效小时杯量 / 理论小时杯量) × 100%"},
-    {"key": "qcPassRate",         "label_zh": "品控稽核达标率",    "format": "percent",  "comparisons": ["sequential"],   "good_direction": "up",   "source": "pending",   "formula_zh": "≥80分稽核任务数 / 稽核任务数（QC源待接入）"},
-    {"key": "qcAvgScore",         "label_zh": "品控稽核平均分",    "format": "score",    "comparisons": ["sequential"],   "good_direction": "up",   "source": "pending",   "formula_zh": "稽核总分 / 稽核任务数"},
+    {"key": "qcPassRate",         "label_zh": "品控稽核达标率",    "format": "percent",  "comparisons": ["sequential"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "SUM(t_shopcheck_report.score≥80) / COUNT(*)  （t_shopcheck_report, status∈{10,40}, 0<score≤100）"},
+    {"key": "qcAvgScore",         "label_zh": "品控稽核平均分",    "format": "score",    "comparisons": ["sequential"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "SUM(t_shopcheck_report.score) / COUNT(*)"},
     {"key": "materialLossRate",   "label_zh": "原料损耗率",        "format": "percent",  "comparisons": ["wow", "mom"],   "good_direction": "down", "source": "partial",   "formula_zh": "(实际 − 理论消耗成本) / 理论消耗成本（BOM 理论值待接入）"},
     {"key": "avgDailyProducts",   "label_zh": "单店日均商品数",    "format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "t_order_store_fact 商品数 / 运营天数"},
     {"key": "avgDailyFreshMade",  "label_zh": "单店日均现制商品数","format": "count",    "comparisons": ["wow", "mom"],   "good_direction": "up",   "source": "confirmed", "formula_zh": "self_quantity / 运营天数"},
@@ -146,10 +147,19 @@ def main() -> None:
         labor = []
     print(f"  → {len(labor)} rows")
 
+    print("[collect] QC shop-check reports…")
+    try:
+        qc = fetch_daily_qc(RETAIN_DAYS)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [warn] qc failed: {exc}")
+        qc = []
+    print(f"  → {len(qc)} rows")
+
     # ── Build daily store rows ──────────────────────────────────────
     timing_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in daily_timing}
     facts_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in daily_facts}
     labor_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in labor}
+    qc_by = {(int(r["shop_id"]), str(r["et_date"])): r for r in qc}
     dates = sorted({str(r["et_date"]) for r in daily_facts})
     if not dates:
         # No real data — bail rather than ship an empty payload.
@@ -197,6 +207,15 @@ def main() -> None:
             labor_total = round(_to_float(l["labor_hours_total"]), 2) if l else None
             labor_productive = round(_to_float(l["labor_hours_productive"]), 2) if l else None
 
+            q = qc_by.get((shop_id, d))
+            if q and _to_int(q["report_count"]) > 0:
+                report_count = _to_int(q["report_count"])
+                qc_pass_pair = {"num": _to_int(q["pass_count"]), "den": report_count}
+                qc_score_pair = {"num": _to_int(q["score_sum"]), "den": report_count}
+            else:
+                qc_pass_pair = None
+                qc_score_pair = None
+
             daily_rows.append({
                 "shop_no": shop_no, "date": d, "operating": True,
                 "order_count": orders,
@@ -210,8 +229,8 @@ def main() -> None:
                 "avg_daily_fresh_made": fresh,
                 "avg_daily_equiv": equiv,
                 "satisfaction": {"num": orders - unsat, "den": orders},
-                "qc_pass_rate": None,
-                "qc_avg_score": None,
+                "qc_pass_rate": qc_pass_pair,
+                "qc_avg_score": qc_score_pair,
                 "hourly_cup_achieve": None,
                 "material_loss_rate": None,
                 "labor_hours_total": labor_total,

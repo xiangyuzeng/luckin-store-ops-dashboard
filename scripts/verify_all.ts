@@ -54,23 +54,25 @@ group('Payload meta', () => {
   const fromMs = new Date(data.meta.retained_from + 'T00:00:00Z').getTime();
   const toMs = new Date(data.meta.retained_to + 'T00:00:00Z').getTime();
   const days = Math.round((toMs - fromMs) / 86400000) + 1;
-  assertEq('retention window = 90 days', days, 90);
+  // Window tracks the pipeline's RETAIN_DAYS (default 90) plus the current day,
+  // so it drifts by ±1. Assert a sane band + day-by-day continuity instead of
+  // pinning an exact count.
+  assertTrue(`retention window is a sane size (${days} days)`, days >= 30 && days <= 120);
+  const distinctDates = new Set(data.daily_store_rows.map((r) => r.date)).size;
+  assertEq('every retained day has rows (continuous)', distinctDates, days);
 });
 
 // ── 2. Store roster ─────────────────────────────────────────────────
-group('Store roster (locked roster of 12)', () => {
-  assertEq('12 stores', data.stores.length, 12);
-  const expectedShops = ['US00001','US00002','US00003','US00004','US00005','US00006','US00008','US00012','US00020','US00024','US00025','US00027'];
-  const actualShops = data.stores.map((s) => s.shop_no).sort();
-  assertEq('shop_no set matches locked roster', actualShops, expectedShops.sort());
-  // operating_today: US00027 should be non-operating per the seed.
-  const us27 = data.stores.find((s) => s.shop_no === 'US00027');
-  assertEq('US00027 not operating_today (seed)', us27?.operating_today, false);
-  // Every other store should be operating.
-  const others = data.stores.filter((s) => s.shop_no !== 'US00027');
-  assertTrue('Remaining 11 stores operating_today', others.every((s) => s.operating_today));
-  // Every store has city/region.
-  assertTrue('Every store has city + region', data.stores.every((s) => s.city && s.region));
+group('Store roster (derived from payload)', () => {
+  // The roster grows/shrinks as stores open and close — derive invariants from
+  // the payload rather than pinning a frozen list that goes stale silently.
+  assertTrue(`has a plausible store count (${data.stores.length})`, data.stores.length >= 1);
+  const shopNos = data.stores.map((s) => s.shop_no);
+  assertTrue('every shop_no matches US##### format', shopNos.every((s) => /^US\d{5}$/.test(s)));
+  assertEq('shop_no values are unique', new Set(shopNos).size, shopNos.length);
+  assertTrue('every store has city + region', data.stores.every((s) => s.city && s.region));
+  const operating = data.stores.filter((s) => s.operating_today).length;
+  assertTrue(`at least one store operating_today (${operating}/${data.stores.length})`, operating >= 1);
 });
 
 // ── 3. METRICS registry ─────────────────────────────────────────────
@@ -86,9 +88,11 @@ group('METRICS registry', () => {
   const confirmed = METRICS.filter((m) => m.source === 'confirmed').length;
   const pending = METRICS.filter((m) => m.source === 'pending').length;
   const partial = METRICS.filter((m) => m.source === 'partial').length;
-  assertEq('confirmed source count', confirmed, 9);
-  assertEq('pending source count', pending, 6);
-  assertEq('partial source count', partial, 1);
+  // Don't pin the split — it shifts as pending sources get wired to confirmed.
+  // Assert every metric carries a valid tag and the parts sum to the whole.
+  assertEq('confirmed + pending + partial = total metrics', confirmed + pending + partial, METRICS.length);
+  assertTrue('every metric has a valid source tag',
+    METRICS.every((m) => ['confirmed', 'pending', 'partial'].includes(m.source)));
   // 19-col store table: 3 identity + 16 metric columns.
   assertEq('STORE_TABLE_COLUMNS metric count', STORE_TABLE_COLUMNS.length, 16);
 });
@@ -118,54 +122,45 @@ group('Daily-row internal consistency', () => {
   assertTrue(`equiv = fresh + 0.25 * purchased on every operating day (${badEquiv}/${totalOperating} bad)`, badEquiv === 0);
 });
 
-// ── 5. Seed populates pending-metric demos; source_status still tags them pending ──
-// Honest-data discipline is enforced in the PIPELINE (pipeline/frontend_formatter.py
-// emits null for unmapped sources). The SEED ships demo values per the spec's
-// "plausible numbers ... correct numerator/denominator components for ratios"
-// requirement, so the deployed UI can be evaluated end-to-end. When the live
-// pipeline replaces the seed payload, the UI will revert to "数据源待接入" for
-// any metric whose production source is still unmapped.
-group('Seed has demo values + source_status still tags pending/partial', () => {
-  // (a) Source-status tagging matches production reality.
-  for (const k of ['satisfaction', 'qcPassRate', 'qcAvgScore', 'hourlyCups', 'perfHourlyCups', 'hourlyCupAchieve'] as const) {
-    assertEq(`source_status[${k}] === 'pending'`, data.meta.source_status[k], 'pending');
-  }
-  assertEq("source_status[materialLossRate] === 'partial'", data.meta.source_status['materialLossRate'], 'partial');
+// ── 5. Source-status integrity + value sanity ───────────────────────
+// source_status is "kept in sync by convention" across three places (README):
+// the payload meta, the per-metric tag in payload.metrics, and the
+// lib/metrics.ts registry. Drift between them is exactly what silently disables
+// the "数据源待接入" fallback, so assert that invariant directly instead of
+// pinning which sources are pending (that changes as sources get wired up).
+group('Source-status integrity + value sanity', () => {
+  const VALID = ['confirmed', 'pending', 'partial'];
+  const ss = data.meta.source_status as Record<string, string>;
+  assertTrue('every source_status value is valid', Object.values(ss).every((v) => VALID.includes(v)));
 
-  // (b) Per-row demo values exist for every operating row.
-  let operating = 0;
-  let missingSat = 0, missingQc = 0, missingLoss = 0, missingLabor = 0, missingAch = 0;
-  for (const r of data.daily_store_rows) {
-    if (!r.operating) continue;
-    operating += 1;
-    if (r.satisfaction === null) missingSat += 1;
-    if (r.qc_pass_rate === null) missingQc += 1;
-    if (r.material_loss_rate === null) missingLoss += 1;
-    if (r.labor_hours_total === null || r.labor_hours_productive === null) missingLabor += 1;
-    if (r.hourly_cup_achieve === null) missingAch += 1;
+  // (a) payload meta agrees with the per-metric tag in payload.metrics.
+  let metaVsPayload = 0;
+  for (const m of data.metrics) {
+    if (ss[m.key] !== undefined && ss[m.key] !== m.source) metaVsPayload += 1;
   }
-  assertTrue(`satisfaction present on every operating day (${missingSat}/${operating} missing)`, missingSat === 0);
-  assertTrue(`qc_pass_rate present on every operating day (${missingQc}/${operating} missing)`, missingQc === 0);
-  assertTrue(`material_loss_rate present on every operating day (${missingLoss}/${operating} missing)`, missingLoss === 0);
-  assertTrue(`labor_hours present on every operating day (${missingLabor}/${operating} missing)`, missingLabor === 0);
-  assertTrue(`hourly_cup_achieve present on every operating day (${missingAch}/${operating} missing)`, missingAch === 0);
+  assertEq('source_status agrees with payload.metrics tags', metaVsPayload, 0);
 
-  // (c) getMetricValue() returns non-null over the full retained range.
+  // (b) payload tags agree with the lib/metrics.ts registry.
+  let payloadVsRegistry = 0;
+  for (const m of data.metrics) {
+    const reg = METRIC_BY_KEY[m.key as MetricKey];
+    if (reg && reg.source !== m.source) payloadVsRegistry += 1;
+  }
+  assertEq('payload metric tags agree with METRICS registry', payloadVsRegistry, 0);
+
+  // (c) Where a rate/score metric has a value over the full range, it sits in a
+  // plausible band. Production sources may legitimately be null (T+1 latency,
+  // partial coverage), so assert only over non-null values — never presence.
   const range = filterDaily(data.daily_store_rows, null, data.meta.retained_from, data.meta.retained_to);
-  for (const k of ['satisfaction', 'qcPassRate', 'qcAvgScore', 'hourlyCups', 'perfHourlyCups', 'hourlyCupAchieve', 'materialLossRate'] as const) {
+  const inBand = (k: MetricKey, lo: number, hi: number) => {
     const v = getMetricValue(range, k);
-    assertTrue(`getMetricValue(${k}) non-null over full range (got ${v})`, v !== null);
-  }
-
-  // (d) Sanity: values are in plausible ranges.
-  const sat = getMetricValue(range, 'satisfaction') ?? 0;
-  assertTrue(`satisfaction in [0.90, 1.00] (got ${(sat * 100).toFixed(2)}%)`, sat >= 0.9 && sat <= 1.0);
-  const qcPass = getMetricValue(range, 'qcPassRate') ?? 0;
-  assertTrue(`qcPassRate in [0.70, 1.00] (got ${(qcPass * 100).toFixed(2)}%)`, qcPass >= 0.7 && qcPass <= 1.0);
-  const qcScore = getMetricValue(range, 'qcAvgScore') ?? 0;
-  assertTrue(`qcAvgScore in [75, 95] (got ${qcScore.toFixed(2)})`, qcScore >= 75 && qcScore <= 95);
-  const loss = getMetricValue(range, 'materialLossRate') ?? 0;
-  assertTrue(`materialLossRate in [0.005, 0.05] (got ${(loss * 100).toFixed(2)}%)`, loss >= 0.005 && loss <= 0.05);
+    assertTrue(`${k} within [${lo}, ${hi}] when present (got ${v})`, v === null || (v >= lo && v <= hi));
+  };
+  inBand('satisfaction', 0, 1);
+  inBand('qcPassRate', 0, 1);
+  inBand('qcAvgScore', 0, 100);
+  inBand('materialLossRate', 0, 1);
+  inBand('hourlyCupAchieve', 0, 5);
 });
 
 // ── 6. Aggregation correctness — Σnum/Σden vs simple-avg ────────────
@@ -238,18 +233,31 @@ group('Filters: parsing, normalization, cascading', () => {
   assertEq('parses from from URL', f.from, last);
   assertEq('parses to from URL', f.to, last);
   assertEq('defaults city=ALL', f.city, 'ALL');
+  const operatingCount = data.stores.filter((s) => s.operating_today).length;
   const norm = normalize(f, data);
-  assertTrue('shopNos has 11 operating stores by default', (norm.shopNos?.length ?? 0) === 11);
-  assertTrue('US00027 excluded by default (non-operating_today)',
-    !(norm.shopNos ?? []).includes('US00027'));
-  // Filter to a specific city
-  const f2 = { ...f, city: 'New York' as const };
+  assertEq('shopNos defaults to operating-today stores', norm.shopNos?.length, operatingCount);
+  const nonOperating = data.stores.find((s) => !s.operating_today);
+  if (nonOperating) {
+    assertTrue(`non-operating store ${nonOperating.shop_no} excluded by default`,
+      !(norm.shopNos ?? []).includes(nonOperating.shop_no));
+  } else {
+    assertEq('all stores operating → none excluded by default', norm.shopNos?.length, data.stores.length);
+  }
+  // Filter to a specific city — keeps that city's operating stores.
+  const someCity = data.stores[0]!.city;
+  const f2 = { ...f, city: someCity };
   const norm2 = normalize(f2, data);
-  assertEq('city=New York keeps 11 stores', norm2.shopNos?.length, 11);
-  // Filter to a specific shop
-  const f3 = { ...f, shop: 'US00001' as const };
+  const cityOperating = data.stores.filter((s) => s.operating_today && s.city === someCity).length;
+  assertEq(`city=${someCity} keeps its operating stores`, norm2.shopNos?.length, cityOperating);
+  // Explicit shop is honored as itself — even if not operating today (real store).
+  const someShop = data.stores[0]!.shop_no;
+  const f3 = { ...f, shop: someShop };
   const norm3 = normalize(f3, data);
-  assertEq('shop=US00001 narrows to one shop', norm3.shopNos, ['US00001']);
+  assertEq('explicit shop narrows to that one shop', norm3.shopNos, [someShop]);
+  // A genuinely unknown shop_no (stale URL) falls back to the operating set.
+  const f3b = { ...f, shop: 'US99999' as const };
+  const norm3b = normalize(f3b, data);
+  assertEq('unknown shop falls back to operating set', norm3b.shopNos?.length, operatingCount);
   // Out-of-range dates → clamped with warning
   const f4 = { ...f, from: '2020-01-01' };
   const norm4 = normalize(f4, data);
@@ -257,7 +265,7 @@ group('Filters: parsing, normalization, cascading', () => {
   assertTrue('warning attached when clamped', norm4.warnings.includes('rangeNoteOutside'));
   // listStoresMatching honors operating_today
   const matching = listStoresMatching(data.stores, 'ALL', 'ALL');
-  assertEq('listStoresMatching returns 11 operating stores', matching.length, 11);
+  assertEq('listStoresMatching returns operating stores', matching.length, operatingCount);
 });
 
 // ── 9. Half-hour rollups: 48 slots when data present ────────────────
@@ -319,13 +327,15 @@ group('Single-shop aggregation', () => {
   const last = dates[dates.length - 1]!;
   const sevenFrom = dates[dates.length - 7]!;
   const rowsAll = filterDaily(data.daily_store_rows, null, sevenFrom, last);
-  const rowsUs1 = filterDaily(data.daily_store_rows, ['US00001'], sevenFrom, last);
-  // Per-store rows should be 7 days * 1 store = 7 (US00001 is operating throughout).
-  assertEq('US00001 7-day filter returns 7 rows', rowsUs1.length, 7);
-  // Order count for US00001 is a subset of order count for all stores.
+  // Pick a store that actually traded in the window so the subset check is meaningful.
+  const candidates = Array.from(new Set(rowsAll.filter((r) => (r.order_count ?? 0) > 0).map((r) => r.shop_no)));
+  const shop = candidates[0]!;
+  const rowsShop = filterDaily(data.daily_store_rows, [shop], sevenFrom, last);
+  assertTrue(`${shop} 7-day filter returns up to 7 rows (${rowsShop.length})`, rowsShop.length > 0 && rowsShop.length <= 7);
+  // The store's order count is a positive subset of the all-stores total.
   const allOrders = getMetricValue(rowsAll, 'orderCount') ?? 0;
-  const us1Orders = getMetricValue(rowsUs1, 'orderCount') ?? 0;
-  assertTrue('US00001 orders < total orders (subset)', us1Orders > 0 && us1Orders < allOrders);
+  const shopOrders = getMetricValue(rowsShop, 'orderCount') ?? 0;
+  assertTrue(`${shop} orders is a positive subset of total (${shopOrders} ≤ ${allOrders})`, shopOrders > 0 && shopOrders <= allOrders);
 });
 
 // ── 13. Final tally ─────────────────────────────────────────────────

@@ -78,17 +78,18 @@ export function normalize(state: FilterState, payload: Payload): NormalizedFilte
   }
 
   const matching = listStoresMatching(payload.stores, state.city, state.region);
-  // Shop filter: keep only operating stores; if explicit shop doesn't exist in matching, ignore it.
   let shopNos: ShopNo[] | null = null;
   if (state.shop !== ALL) {
-    if (matching.some((s) => s.shop_no === state.shop)) {
-      shopNos = [state.shop];
-    } else {
-      // Stale explicit shop — fall back to all matching operating stores.
-      shopNos = matching.map((s) => s.shop_no);
-    }
+    // Honor an explicit shop selection whenever it refers to a real store —
+    // even if that store is not operating today (the user may be viewing a
+    // historical range) or is excluded by the active city/region filter (the
+    // explicit pick is the most specific intent). Only a genuinely unknown
+    // shop_no (e.g. a stale URL pointing at a removed store) falls back to the
+    // operating-today set.
+    const exists = payload.stores.some((s) => s.shop_no === state.shop);
+    shopNos = exists ? [state.shop] : matching.map((s) => s.shop_no);
   } else {
-    // No explicit shop: limit to operating-today stores.
+    // No explicit shop: limit to operating-today stores (city/region applied).
     shopNos = matching.map((s) => s.shop_no);
   }
 

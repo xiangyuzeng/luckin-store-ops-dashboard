@@ -1,0 +1,46 @@
+name: ci
+
+# Quality gate: typecheck, lint, payload-contract validation, and the
+# end-to-end verification suite. Runs on every push and PR so drift (stale
+# fixtures, broken payloads, type regressions) surfaces instead of rotting
+# silently. Also runs on the pipeline's hourly data pushes, which means each
+# new data/payload.json is contract-checked before anyone trusts it.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Validate payload contract
+        run: npm run validate:payload
+
+      - name: Verify (end-to-end)
+        run: npx tsx scripts/verify_all.ts

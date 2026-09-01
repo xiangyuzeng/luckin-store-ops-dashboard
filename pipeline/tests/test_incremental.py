@@ -20,7 +20,7 @@ Run from the repo root:  python -m unittest discover -s pipeline/tests
 import unittest
 
 from pipeline.collectors.orders import aggregate_spu_rows
-from pipeline.frontend_formatter import _splice_rows
+from pipeline.frontend_formatter import _payload_leaves_a_gap, _splice_rows
 
 
 def _row(shop, day, code, name, qty):
@@ -111,6 +111,32 @@ class SpliceRows(unittest.TestCase):
         out = _splice_rows([], self.fresh,
                            fresh_from="2026-08-30", retain_from="2026-06-01")
         self.assertEqual(len(out), 2)
+
+
+class PayloadGap(unittest.TestCase):
+    """A stale payload must trigger a full rebuild, not a hole in the history."""
+
+    today = __import__("datetime").date(2026, 9, 1)
+
+    def _payload(self, retained_to):
+        return {"meta": {"retained_to": retained_to}}
+
+    def test_yesterdays_payload_is_spliceable(self):
+        self.assertFalse(_payload_leaves_a_gap(self._payload("2026-08-31"), self.today))
+
+    def test_a_payload_that_ends_where_the_window_starts_is_spliceable(self):
+        # INCREMENTAL_DAYS=3 → fresh window starts 08-30; 08-29 abuts it.
+        self.assertFalse(_payload_leaves_a_gap(self._payload("2026-08-29"), self.today))
+
+    def test_an_older_payload_leaves_a_gap(self):
+        self.assertTrue(_payload_leaves_a_gap(self._payload("2026-08-28"), self.today))
+        self.assertTrue(_payload_leaves_a_gap(self._payload("2026-06-01"), self.today))
+
+    def test_a_payload_without_a_retained_to_is_not_trusted(self):
+        self.assertTrue(_payload_leaves_a_gap({"meta": {}}, self.today))
+
+    def test_no_previous_payload_is_handled_elsewhere(self):
+        self.assertFalse(_payload_leaves_a_gap(None, self.today))
 
 
 if __name__ == "__main__":

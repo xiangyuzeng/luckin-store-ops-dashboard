@@ -144,6 +144,24 @@ def _load_previous_payload() -> dict[str, Any] | None:
     return prev
 
 
+def _payload_leaves_a_gap(prev: dict[str, Any] | None, today_et: date) -> bool:
+    """True if splicing onto this payload would leave days with no data.
+
+    The fresh window starts INCREMENTAL_DAYS − 1 days back. If the previous
+    payload ends before the day preceding that — a container that sat idle, an
+    outage, a rebuild from an old image — the days in between belong to neither
+    side, and an incremental run would write a hole into the history and keep it
+    there until the next full rebuild.
+    """
+    if prev is None:
+        return False
+    retained_to = prev.get("meta", {}).get("retained_to")
+    if not retained_to:
+        return True
+    earliest_fresh = today_et - timedelta(days=INCREMENTAL_DAYS - 1)
+    return date.fromisoformat(str(retained_to)) < earliest_fresh - timedelta(days=1)
+
+
 def _splice_rows(prev_rows: list[dict[str, Any]], fresh_rows: list[dict[str, Any]],
                  fresh_from: str, retain_from: str) -> list[dict[str, Any]]:
     """Freshly collected days replace their old versions; older days carry over.
@@ -177,10 +195,12 @@ def main() -> None:
     # ── Collection window ───────────────────────────────────────────
     today_et = datetime.now(STORE_TZ).date()
     prev_payload = _load_previous_payload()
+    stale_prev = _payload_leaves_a_gap(prev_payload, today_et)
     full_rebuild = (
         prev_payload is None
         or FORCE_FULL_REBUILD
         or today_et.weekday() == FULL_REBUILD_WEEKDAY
+        or stale_prev
     )
     # One extra day of slack: the SQL window is "now − N days" in UTC, so the
     # oldest ET day it touches is only partly covered. fresh_from starts a day
@@ -190,6 +210,7 @@ def main() -> None:
     retain_from = (today_et - timedelta(days=RETAIN_DAYS - 1)).isoformat()
     reason = ("forced" if FORCE_FULL_REBUILD else
               "no usable previous payload" if prev_payload is None else
+              "previous payload too old to splice onto" if stale_prev else
               f"weekly rebuild (weekday={FULL_REBUILD_WEEKDAY})")
     if full_rebuild:
         print(f"[mode] FULL rebuild — {reason}; window={window_days}d")

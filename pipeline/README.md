@@ -38,6 +38,18 @@ The SPU collector returns `spu_code` and `spu_name` in one scan;
 `aggregate_spu_rows()` projects it onto whichever column a consumer needs.
 Those were two queries scanning the same 2.09M rows twice a night.
 
+## Redeploying the container
+
+The collection container is rebuilt by hand. From the internal host:
+
+```bash
+bash pipeline/restart.sh          # git pull → rebuild → up -d → follow logs
+```
+
+Then confirm the running code is current: `meta.collection_mode` in
+`data/payload.json` is `incremental` or `full`. A payload with no such key was
+produced by pre-2026-09-01 code, i.e. the container did not actually restart.
+
 ## Running it
 
 ```bash

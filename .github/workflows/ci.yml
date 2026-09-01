@@ -44,3 +44,21 @@ jobs:
 
       - name: Verify (end-to-end)
         run: npx tsx scripts/verify_all.ts
+
+  pipeline:
+    name: Pipeline unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The collection window and the SPU projection decide what the payload
+      # contains; both changed to get this pipeline off the top of the L0
+      # slow-query list, and both are pure functions. No DB, no AWS.
+      - name: Unit tests
+        run: python -m unittest discover -s pipeline/tests -t .

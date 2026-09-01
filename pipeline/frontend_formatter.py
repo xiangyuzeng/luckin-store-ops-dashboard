@@ -13,6 +13,7 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .collectors.bom import fetch_bom_avg, fetch_goods_unit_costs
 from .collectors.efficiency import (
@@ -21,10 +22,10 @@ from .collectors.efficiency import (
 )
 from .collectors.labor import fetch_daily_labor_hours
 from .collectors.orders import (
+    aggregate_spu_rows,
     fetch_daily_store_fact,
     fetch_daily_timing,
     fetch_shop_id_to_shop_no_map,
-    fetch_spu_code_daily,
     fetch_spu_daily,
 )
 from .collectors.qc import fetch_daily_qc
@@ -34,8 +35,25 @@ from .config.settings import THEORETICAL_HOURLY_CUPS
 
 RETAIN_DAYS = int(os.environ.get("RETAIN_DAYS", "90"))
 HALF_HOUR_RETAIN_DAYS = int(os.environ.get("HALF_HOUR_RETAIN_DAYS", "3"))
+
+# The board keeps RETAIN_DAYS of history, but a day older than a few days does
+# not change: its orders are closed and its spoilage is booked. Re-querying all
+# 90 days every night made t_order's 90-day predicate cover essentially the
+# whole table, so the optimizer dropped idx_pay_time and full-scanned — 20~48 s
+# per query, 4.18M rows a night (LCNA-DBA-SQL-2026-0901-B, SQL-05/06/11). The
+# same query shape over a 3-day window measures 0.15 s.
+#
+# So each run re-collects only the last INCREMENTAL_DAYS ET days and splices
+# them into the previous payload. Late status changes are the reason this is 3
+# and not 1. Anything that slipped through anyway is healed by the weekly full
+# rebuild, which also backfills after an outage.
+INCREMENTAL_DAYS = int(os.environ.get("INCREMENTAL_DAYS", "3"))
+# Python weekday(): Monday=0 … Sunday=6.
+FULL_REBUILD_WEEKDAY = int(os.environ.get("FULL_REBUILD_WEEKDAY", "6"))
+FORCE_FULL_REBUILD = os.environ.get("FORCE_FULL_REBUILD", "").lower() in {"1", "true", "yes"}
 OUTPUT = Path(__file__).resolve().parent.parent / "data" / "payload.json"
 TENANT = os.environ.get("LUCKIN_TENANT", "LKUS")
+STORE_TZ = ZoneInfo("America/New_York")
 
 # Mirrors lib/metrics.ts. With real production data, satisfaction is
 # CONFIRMED (source = t_order_store_fact.{pickup,delivery}_dissatisfied_order_quantity).
@@ -107,6 +125,39 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _load_previous_payload() -> dict[str, Any] | None:
+    """The payload from the last run, or None if it cannot be trusted."""
+    if not OUTPUT.exists():
+        print("[mode] no previous payload on disk")
+        return None
+    try:
+        prev = json.loads(OUTPUT.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[mode] previous payload unreadable ({exc})")
+        return None
+    if prev.get("meta", {}).get("schema_version") != 1:
+        print("[mode] previous payload has a different schema_version")
+        return None
+    if prev.get("meta", {}).get("tenant") != TENANT:
+        print("[mode] previous payload belongs to another tenant")
+        return None
+    return prev
+
+
+def _splice_rows(prev_rows: list[dict[str, Any]], fresh_rows: list[dict[str, Any]],
+                 fresh_from: str, retain_from: str) -> list[dict[str, Any]]:
+    """Freshly collected days replace their old versions; older days carry over.
+
+    fresh_from is the first ET date this run re-collected in full. Everything on
+    or after it comes from this run — a day whose rows are missing from the
+    fresh set genuinely has no data now (a store that closed, a cancelled
+    order), so carrying the old rows forward would resurrect them.
+    """
+    kept = [r for r in prev_rows if retain_from <= r["date"] < fresh_from]
+    fresh = [r for r in fresh_rows if r["date"] >= fresh_from]
+    return sorted(kept + fresh, key=lambda r: (r["date"], r.get("shop_no", "")))
+
+
 # Collectors → set of metric keys they populate. Used to surface per-metric
 # "last collector run" timestamps in the ?debug=1 overlay.
 COLLECTOR_TO_METRICS: dict[str, list[str]] = {
@@ -123,6 +174,29 @@ def main() -> None:
     print(f"[refresh] tenant={TENANT} retain_days={RETAIN_DAYS} half_hour_days={HALF_HOUR_RETAIN_DAYS}")
     collector_run_ts: dict[str, str] = {}
 
+    # ── Collection window ───────────────────────────────────────────
+    today_et = datetime.now(STORE_TZ).date()
+    prev_payload = _load_previous_payload()
+    full_rebuild = (
+        prev_payload is None
+        or FORCE_FULL_REBUILD
+        or today_et.weekday() == FULL_REBUILD_WEEKDAY
+    )
+    # One extra day of slack: the SQL window is "now − N days" in UTC, so the
+    # oldest ET day it touches is only partly covered. fresh_from starts a day
+    # later, and that day is whole.
+    window_days = RETAIN_DAYS if full_rebuild else INCREMENTAL_DAYS + 1
+    fresh_from = (today_et - timedelta(days=INCREMENTAL_DAYS - 1)).isoformat()
+    retain_from = (today_et - timedelta(days=RETAIN_DAYS - 1)).isoformat()
+    reason = ("forced" if FORCE_FULL_REBUILD else
+              "no usable previous payload" if prev_payload is None else
+              f"weekly rebuild (weekday={FULL_REBUILD_WEEKDAY})")
+    if full_rebuild:
+        print(f"[mode] FULL rebuild — {reason}; window={window_days}d")
+    else:
+        print(f"[mode] incremental — window={window_days}d, "
+              f"re-collecting from {fresh_from}, retaining from {retain_from}")
+
     print("[collect] store directory…")
     master = fetch_store_directory()
     print(f"  → {len(master)} stores in master")
@@ -132,18 +206,21 @@ def main() -> None:
     print(f"  → {len(shop_id_to_no)} ids resolved")
 
     print("[collect] daily store-fact aggregates…")
-    daily_facts = fetch_daily_store_fact(RETAIN_DAYS)
+    daily_facts = fetch_daily_store_fact(window_days)
     collector_run_ts["orders"] = _now_iso()
     print(f"  → {len(daily_facts)} (shop_id, et_date) rows")
 
     print("[collect] daily timing (accept/make)…")
-    daily_timing = fetch_daily_timing(RETAIN_DAYS)
+    daily_timing = fetch_daily_timing(window_days)
     collector_run_ts["efficiency"] = _now_iso()
     print(f"  → {len(daily_timing)} rows")
 
-    print("[collect] SPU daily…")
-    spu_daily = fetch_spu_daily(RETAIN_DAYS)
-    print(f"  → {len(spu_daily)} (shop, date, spu) rows")
+    print("[collect] SPU daily (one scan, name + code)…")
+    spu_combined = fetch_spu_daily(window_days)
+    spu_daily = aggregate_spu_rows(spu_combined, "spu_name")
+    spu_code_daily = aggregate_spu_rows(spu_combined, "spu_code")
+    print(f"  → {len(spu_combined)} scanned rows → {len(spu_daily)} by name, "
+          f"{len(spu_code_daily)} by code")
 
     print("[collect] half-hour running totals…")
     halfhour_running = fetch_half_hour_running_totals(HALF_HOUR_RETAIN_DAYS)
@@ -155,20 +232,12 @@ def main() -> None:
 
     print("[collect] spoilage by spec…")
     try:
-        spoilage_by_spec = fetch_daily_spoilage_by_spec(RETAIN_DAYS)
+        spoilage_by_spec = fetch_daily_spoilage_by_spec(window_days)
         collector_run_ts["spoilage_bom"] = _now_iso()
     except Exception as exc:  # noqa: BLE001
         print(f"  [warn] spoilage failed: {exc}")
         spoilage_by_spec = []
     print(f"  → {len(spoilage_by_spec)} rows")
-
-    print("[collect] SPU code daily sales…")
-    try:
-        spu_code_daily = fetch_spu_code_daily(RETAIN_DAYS)
-    except Exception as exc:  # noqa: BLE001
-        print(f"  [warn] spu_code_daily failed: {exc}")
-        spu_code_daily = []
-    print(f"  → {len(spu_code_daily)} rows")
 
     print("[collect] BOM avg + goods unit costs…")
     try:
@@ -185,7 +254,7 @@ def main() -> None:
 
     print("[collect] labor hours (attendance + KPI)…")
     try:
-        labor = fetch_daily_labor_hours(RETAIN_DAYS)
+        labor = fetch_daily_labor_hours(window_days)
         collector_run_ts["labor"] = _now_iso()
     except Exception as exc:  # noqa: BLE001
         print(f"  [warn] labor failed: {exc}")
@@ -194,7 +263,7 @@ def main() -> None:
 
     print("[collect] QC shop-check reports…")
     try:
-        qc = fetch_daily_qc(RETAIN_DAYS)
+        qc = fetch_daily_qc(window_days)
         collector_run_ts["qc"] = _now_iso()
     except Exception as exc:  # noqa: BLE001
         print(f"  [warn] qc failed: {exc}")
@@ -429,13 +498,32 @@ def main() -> None:
             **({"opened_on": opened_on} if opened_on else {}),
         })
 
+    # ── Splice this run's days into the retained history ────────────
+    if not full_rebuild and prev_payload is not None:
+        before = (len(daily_rows), len(spu_rows))
+        daily_rows = _splice_rows(prev_payload.get("daily_store_rows", []),
+                                  daily_rows, fresh_from, retain_from)
+        spu_rows = _splice_rows(prev_payload.get("spu_daily_rows", []),
+                                spu_rows, fresh_from, retain_from)
+        print(f"[merge] daily_store_rows {before[0]} fresh → {len(daily_rows)} retained; "
+              f"spu_daily_rows {before[1]} fresh → {len(spu_rows)} retained")
+
+    retained_dates = sorted({r["date"] for r in daily_rows})
+    if not retained_dates:
+        raise RuntimeError("No daily rows after merge; aborting refresh.")
+
     payload = {
         "meta": {
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tenant": TENANT,
             "timezone": "America/New_York",
-            "retained_from": dates[0],
-            "retained_to": dates[-1],
+            "retained_from": retained_dates[0],
+            "retained_to": retained_dates[-1],
+            # Which days this particular run actually queried. A reader chasing
+            # a wrong number needs to know whether it was measured tonight or
+            # carried over from an earlier run.
+            "collection_mode": "full" if full_rebuild else "incremental",
+            "collected_from": retained_dates[0] if full_rebuild else fresh_from,
             "schema_version": 1,
             "source_status": {m["key"]: m["source"] for m in METRICS},
             "collector_timestamps": {

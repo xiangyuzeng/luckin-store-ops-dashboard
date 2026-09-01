@@ -42,11 +42,15 @@ GITHUB_FILE_PATH = os.environ.get("GITHUB_FILE_PATH", "data/payload.json")
 LOG_DIR = os.environ.get("LOG_DIR", "logs")
 
 # ── Daily cron schedule (consumed by pipeline/scheduler/cron_runner.py) ──
-# Defaults: 01:00 US/Eastern — off-peak both for MySQL load and for any
-# operators watching dashboards. Override per environment in .env.
+# 02:30 US/Eastern = 06:30 UTC. It used to be 01:00 ET = 05:00 UTC, which put
+# this refresh inside the nightly batch window on aws-luckyus-salesorder-rw:
+# CloudWatch shows CPU 24.2% against an 8~11% baseline and ReadLatency 0.9~2.5
+# → 4.2 ms at 05:00, with the 02:00 UTC finance reconciliation peaking higher
+# still (LCNA-DBA-SQL-2026-0901-B, action B-05). Moving off the hour costs the
+# board 1.5 h of freshness on data that is already a day old.
 DAILY_TIMEZONE = os.environ.get("DAILY_TIMEZONE", "US/Eastern")
-DAILY_HOUR = int(os.environ.get("DAILY_HOUR", "1"))
-DAILY_MINUTE = int(os.environ.get("DAILY_MINUTE", "0"))
+DAILY_HOUR = int(os.environ.get("DAILY_HOUR", "2"))
+DAILY_MINUTE = int(os.environ.get("DAILY_MINUTE", "30"))
 
 # ── hourlyCupAchieve target ─────────────────────────────────────────
 # Theoretical equivalent-cups-per-hour benchmark used as the denominator

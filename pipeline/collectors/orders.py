@@ -106,11 +106,28 @@ def fetch_daily_timing(retain_days: int = 90) -> list[dict[str, Any]]:
 
 
 def fetch_spu_daily(retain_days: int = 90) -> list[dict[str, Any]]:
-    """Per (shop_id, ET-local date, spu_name) quantity for TOP-N — note column is sku_num."""
+    """Per (shop_id, ET-local date, spu_code, spu_name) quantity — note column is sku_num.
+
+    One scan, two consumers. The TOP-N display path groups this by spu_name
+    (human-readable); the materialLossRate path groups it by spu_code (the join
+    key of t_formula_average). Those used to be two collectors issuing SQL that
+    differed only in that one column, and the cost of keeping them decoupled was
+    measurable: 2026-09-01 slow-log analysis (LCNA-DBA-SQL-2026-0901-B, SQL-05 /
+    SQL-06) found the pair scanning 2,090,481 and 2,090,482 rows on consecutive
+    runs — the same 2.09M rows twice, 38.1 s + 21.8 s per day on the
+    salesorder writer.
+
+    Verified equivalent against production over a 3-day window before the
+    change: name-only, code-only and re-grouped-merged all return 2,970 groups
+    and 18,613 units, and every row carries both columns (no NULL on either
+    side). The qty > 0 filter moves to the consumers, where it applies to the
+    same groups the old HAVING did.
+    """
     sql = """
         SELECT
             o.shop_id,
             DATE(CONVERT_TZ(o.pay_time, 'UTC', 'US/Eastern')) AS et_date,
+            i.spu_code,
             i.spu_name,
             SUM(i.sku_num)                                    AS qty
           FROM luckyus_sales_order.t_order o
@@ -118,39 +135,8 @@ def fetch_spu_daily(retain_days: int = 90) -> list[dict[str, Any]]:
          WHERE o.tenant = %s
            AND o.status = 90
            AND o.pay_time >= UTC_TIMESTAMP() - INTERVAL %s DAY
-           AND i.spu_name IS NOT NULL
-         GROUP BY o.shop_id, et_date, i.spu_name
-         HAVING qty > 0
-         ORDER BY o.shop_id, et_date, qty DESC
-         LIMIT 500000
-    """
-    assert_read_only(sql)
-    with connect("luckyus_sales_order") as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, (TENANT, retain_days))
-            return list(cur.fetchall())
-
-
-def fetch_spu_code_daily(retain_days: int = 90) -> list[dict[str, Any]]:
-    """Per (shop_id, ET-local date, spu_code) quantity — for BOM theoretical-cost join.
-
-    The TOP-N display path uses spu_name (human-readable); the materialLossRate
-    path needs spu_code (matches t_formula_average's join key). Kept as a
-    separate collector so the two consumers stay decoupled."""
-    sql = """
-        SELECT
-            o.shop_id,
-            DATE(CONVERT_TZ(o.pay_time, 'UTC', 'US/Eastern')) AS et_date,
-            i.spu_code,
-            SUM(i.sku_num)                                    AS qty
-          FROM luckyus_sales_order.t_order o
-          JOIN luckyus_sales_order.t_order_item i ON i.order_id = o.id
-         WHERE o.tenant = %s
-           AND o.status = 90
-           AND o.pay_time >= UTC_TIMESTAMP() - INTERVAL %s DAY
-           AND i.spu_code IS NOT NULL
-         GROUP BY o.shop_id, et_date, i.spu_code
-        HAVING qty > 0
+           AND (i.spu_name IS NOT NULL OR i.spu_code IS NOT NULL)
+         GROUP BY o.shop_id, et_date, i.spu_code, i.spu_name
          ORDER BY o.shop_id, et_date
          LIMIT 500000
     """
@@ -159,3 +145,23 @@ def fetch_spu_code_daily(retain_days: int = 90) -> list[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(sql, (TENANT, retain_days))
             return list(cur.fetchall())
+
+
+def aggregate_spu_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    """Collapse fetch_spu_daily() rows onto one SPU column, dropping empty keys.
+
+    key is "spu_name" or "spu_code". Reproduces the old per-collector output,
+    including the HAVING qty > 0 the two queries used to apply.
+    """
+    totals: dict[tuple[int, str, str], float] = {}
+    for r in rows:
+        value = r.get(key)
+        if value is None:
+            continue
+        k = (int(r["shop_id"]), str(r["et_date"]), str(value))
+        totals[k] = totals.get(k, 0) + float(r["qty"] or 0)
+    return [
+        {"shop_id": shop_id, "et_date": et_date, key: value, "qty": qty}
+        for (shop_id, et_date, value), qty in sorted(totals.items())
+        if qty > 0
+    ]
